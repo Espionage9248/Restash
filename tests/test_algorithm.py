@@ -1,4 +1,5 @@
 import math
+import pytest
 from datetime import datetime, timedelta, timezone
 import algorithm as alg
 import models
@@ -261,3 +262,14 @@ def test_wildcards_promote_low_confidence_midpack():
     again = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
     assert {s.id for s in scores.values() if s.wildcard} == \
            {s.id for s in again.values() if s.wildcard}
+
+
+def test_last_engagement_uses_last_played_at_when_newer_than_play_history():
+    cfg = Settings()
+    # play_history is stale (40d) but last_played_at is recent (1d): anchor must be 1d.
+    s = _scene(id="lp", play_history=[days_ago(40)], play_count=2,
+               play_duration=50.0, last_played_at=days_ago(1), performer_ids=["p1"])
+    scores = alg.score_scenes([s, _scene(id="other", performer_ids=["p2"])],
+                              cfg, NOW, "2026-06-05")
+    # fresh_d should reflect the 1-day anchor (just-watched), not 40 days.
+    assert scores["lp"].components["fresh_d"] == pytest.approx(1.0, abs=0.01)

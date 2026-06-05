@@ -381,7 +381,7 @@ def _last_engagement(scene: models.SceneData) -> datetime | None:
     candidates = []
     if scene.play_history:
         candidates.append(max(scene.play_history))
-    elif scene.last_played_at:
+    if scene.last_played_at:
         candidates.append(scene.last_played_at)
     if scene.o_history:
         candidates.append(max(scene.o_history))
