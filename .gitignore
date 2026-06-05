@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Restash local state / secrets (never commit)
+restash_state.json
+.restash.local.json
+
+# Project docs — kept local only, not tracked (per user preference)
+docs/
