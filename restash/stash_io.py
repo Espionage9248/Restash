@@ -164,3 +164,35 @@ def fetch_scenes(stash, per_page: int = 500, progress=None):
 def fetch_performers(stash, per_page: int = 500, progress=None):
     return _paginate(stash, _FIND_PERFORMERS, "findPerformers", "performers",
                      per_page, map_performer, progress)
+
+
+_FIND_TAG = """
+query($filter: FindFilterType) {
+  findTags(filter: $filter) { tags { id name } }
+}
+"""
+
+
+def resolve_tag_id(stash, name: str) -> str | None:
+    """Exact-name lookup of a tag id (for the exclude tag). None if absent."""
+    variables = {"filter": {"q": name, "per_page": 25, "page": 1}}
+    result = stash.call_GQL(_FIND_TAG, variables)
+    tags = ((result or {}).get("findTags") or {}).get("tags") or []
+    for t in tags:
+        if t.get("name") == name:
+            return str(t["id"])
+    return None
+
+
+def filter_excluded(scenes, performers, exclude_tag_id: str | None):
+    """Drop entities carrying the exclude tag (D8 corpus). Also drop scenes with
+    no file. Returns (kept_scenes, kept_performers)."""
+    if exclude_tag_id is None:
+        kept_scenes = [s for s in scenes if s.has_file]
+    else:
+        kept_scenes = [s for s in scenes
+                       if s.has_file and exclude_tag_id not in s.tag_ids]
+    kept_performers = performers
+    if exclude_tag_id is not None:
+        kept_performers = [p for p in performers if exclude_tag_id not in p.tag_ids]
+    return kept_scenes, kept_performers

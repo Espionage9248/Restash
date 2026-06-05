@@ -120,3 +120,24 @@ def test_fetch_performers_paginates(monkeypatch):
     performers = stash_io.fetch_performers(S(), per_page=1)
     assert [p.id for p in performers] == ["1", "2"]
     assert calls["n"] >= 3
+
+def test_resolve_exclude_tag_returns_id_or_none():
+    class S:
+        def call_GQL(self, query, variables=None):
+            if "findTags" in query:
+                name = variables["filter"]["q"]
+                if name == "[Restash: Exclude]":
+                    return {"findTags": {"tags": [{"id": "99",
+                            "name": "[Restash: Exclude]"}]}}
+                return {"findTags": {"tags": []}}
+            return {}
+    assert stash_io.resolve_tag_id(S(), "[Restash: Exclude]") == "99"
+    assert stash_io.resolve_tag_id(S(), "Nonexistent") is None
+
+def test_stash_io_contains_no_mutations():
+    # G2: this build must not write. No *Update/bulk* mutation strings allowed.
+    import pathlib
+    src = pathlib.Path(stash_io.__file__).read_text()
+    for forbidden in ("sceneUpdate", "bulkSceneUpdate", "performerUpdate",
+                      "bulkPerformerUpdate", "mutation"):
+        assert forbidden not in src, f"write path leaked into stash_io: {forbidden}"
