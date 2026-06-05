@@ -144,10 +144,10 @@ Exposed under **Settings → Plugins → Restash**. Defaults match the spec.
 Operational knobs (batch size, retry/backoff, the subset-first write cap) are tuned for
 safe defaults and set programmatically rather than through the UI.
 
-> **Not active in 0.1.0:** the manifest also lists `Also mirror score to rating100` and a
-> `Dry run` toggle. The rating100 mirror is **deferred to a future release** and currently
-> has no effect; dry-run is selected by running the **Dry Run Report** task, not by the
-> toggle. Treat both as reserved for now.
+> **rating100 mirror:** Restash never writes the native `rating100` rating in 0.1.0. An
+> optional mirror (also write the score to `rating100`, for native UI sorting) is planned
+> as a separate future release and will add its own setting when it lands. A "dry run" is
+> simply the **Dry Run Report** task — there's no separate toggle.
 
 ---
 

@@ -12,9 +12,7 @@ settings:
   freshWeight:          { displayName: Freshness strength, type: NUMBER }
   wildcardPercent:      { displayName: Wildcard %, type: NUMBER }
   respectManualRatings: { displayName: Blend manual ratings as a taste prior, type: BOOLEAN }
-  mirrorToRating100:    { displayName: Also mirror score to rating100 (destructive), type: BOOLEAN }
   excludeTagName:       { displayName: Exclusion tag name, type: STRING }
-  dryRun:               { displayName: Dry run (log only), type: BOOLEAN }
 tasks:
   - name: Dry Run Report
     description: Full compute, writes nothing, logs top-30 scenes/performers with score breakdowns. Run this first.
