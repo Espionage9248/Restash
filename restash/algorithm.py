@@ -117,3 +117,46 @@ def percentiles(values: list[float]) -> list[float]:
 
 def to_restash_score(percentile: float) -> int:
     return max(1, round(100 * percentile))
+
+
+def affinity_raw(value_sums: dict[str, float],
+                 exposure_counts: dict[str, int]) -> dict[str, float]:
+    """Σ decayed event values / log2(2 + count_of_scenes_with_x) (spec §4.2)."""
+    out = {}
+    for key, total in value_sums.items():
+        count = exposure_counts.get(key, 0)
+        out[key] = total / math.log2(2 + count)
+    return out
+
+
+def _zscores(raw: dict[str, float]) -> dict[str, float]:
+    """Z-score each value across the class; zero variance → all 0.0 (D10 guard).
+    Returns PRE-tanh z-scores so callers can add priors before squashing."""
+    if not raw:
+        return {}
+    vals = list(raw.values())
+    mean = statistics.fmean(vals)
+    stdev = statistics.pstdev(vals)
+    if stdev < 1e-12:
+        return {k: 0.0 for k in raw}
+    return {k: (v - mean) / stdev for k, v in raw.items()}
+
+
+def normalize_affinities(raw: dict[str, float]) -> dict[str, float]:
+    """Z-score across the class, squash with tanh → [-1, 1] (tags/studios path)."""
+    return {k: math.tanh(z) for k, z in _zscores(raw).items()}
+
+
+def apply_performer_priors(zscored: dict[str, float], favorites: set[str],
+                           ratings: dict[str, int], cfg: Settings) -> dict[str, float]:
+    """Take PRE-tanh z-scores, add favorite bonus + manual-rating blend, then squash
+    once with tanh. Used for the performer class (priors must precede the squash)."""
+    out = {}
+    for key, z in zscored.items():
+        adjusted = z
+        if key in favorites:
+            adjusted += cfg.favorite_affinity_bonus
+        if key in ratings and ratings[key] is not None:
+            adjusted += (ratings[key] - 50) / 50.0 * 0.5
+        out[key] = math.tanh(adjusted)
+    return out

@@ -128,3 +128,27 @@ def test_to_restash_score_floor_and_round():
     assert alg.to_restash_score(0.0) == 1     # floored at 1
     assert alg.to_restash_score(1.0) == 100
     assert alg.to_restash_score(0.874) == 87
+
+def test_affinity_exposure_normalization_favors_rarer():
+    # tag A appears on 2 scenes, tag B on 8; equal total decayed value per appearance.
+    # exposure denom log2(2+count) penalizes the common tag's raw affinity.
+    raw = alg.affinity_raw({"A": 8.0, "B": 8.0}, {"A": 2, "B": 8})
+    assert raw["A"] > raw["B"]
+
+def test_zscore_tanh_normalizes_and_squashes_into_unit_range():
+    out = alg.normalize_affinities({"A": 10.0, "B": 0.0, "C": -10.0})
+    assert all(-1.0 <= v <= 1.0 for v in out.values())
+    assert out["A"] > out["B"] > out["C"]
+
+def test_zscore_zero_variance_falls_back_to_neutral():
+    out = alg.normalize_affinities({"A": 5.0, "B": 5.0, "C": 5.0})
+    assert out == {"A": 0.0, "B": 0.0, "C": 0.0}
+
+def test_performer_favorite_bonus_and_rating_blend():
+    base = {"p1": 0.0}
+    fav = alg.apply_performer_priors(dict(base), favorites={"p1"}, ratings={},
+                                     cfg=Settings())
+    assert fav["p1"] > 0   # +0.5 then tanh
+    rated = alg.apply_performer_priors({"p2": 0.0}, favorites=set(),
+                                       ratings={"p2": 100}, cfg=Settings())
+    assert rated["p2"] > 0   # (100-50)/50*0.5 = +0.5 then tanh
