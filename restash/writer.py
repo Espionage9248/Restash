@@ -72,12 +72,24 @@ def _call_with_retry(stash, query: str, variables: dict, cfg):
     raise last_exc
 
 
+def _count_succeeded(result, n: int) -> int:
+    """How many of the n aliased updates (u0..u{n-1}) actually committed.
+    stashapi returns HTTP 200 + a data dict even when some aliases error (the
+    failed ones come back as null), so a batch is NOT necessarily all-or-nothing.
+    Count only the non-null aliases. If the response shape is unrecognized, assume
+    all n committed (we cannot prove a failure) rather than under-reporting."""
+    if not isinstance(result, dict):
+        return n
+    return sum(1 for k in range(n) if result.get(f"u{k}") is not None)
+
+
 def write_scores(stash, entity: str, scored: dict, existing_custom_fields: dict,
                  cfg, now_iso: str) -> dict:
     """Partial-write restash_* for changed entities only, in aliased batches.
     `scored` maps id → SceneScore/PerformerScore; `existing_custom_fields` maps id →
     that entity's current custom_fields (for skip-unchanged). Honors write_limit
-    (subset-first gate). Returns {written, skipped, would_write}."""
+    (subset-first gate). Returns {written, skipped, would_write, failed} where
+    `written`/`failed` count only server-acknowledged (non-null) aliases."""
     build = scene_partial if entity == "scene" else performer_partial
     pending = []
     skipped = 0
@@ -93,12 +105,16 @@ def write_scores(stash, entity: str, scored: dict, existing_custom_fields: dict,
         pending = pending[:cfg.write_limit]
 
     written = 0
+    failed = 0
     for batch in _chunks(pending, cfg.write_chunk_size):
         query = aliased_update_mutation(entity, len(batch))
         variables = {f"i{k}": inp for k, inp in enumerate(batch)}
-        _call_with_retry(stash, query, variables, cfg)
-        written += len(batch)
-    return {"written": written, "skipped": skipped, "would_write": would_write}
+        result = _call_with_retry(stash, query, variables, cfg)
+        ok = _count_succeeded(result, len(batch))
+        written += ok
+        failed += len(batch) - ok
+    return {"written": written, "skipped": skipped, "would_write": would_write,
+            "failed": failed}
 
 
 def clear_scores(stash, entity: str, ids: list, cfg) -> int:
@@ -109,6 +125,6 @@ def clear_scores(stash, entity: str, ids: list, cfg) -> int:
     for batch in _chunks(inputs, cfg.write_chunk_size):
         query = aliased_update_mutation(entity, len(batch))
         variables = {f"i{k}": inp for k, inp in enumerate(batch)}
-        _call_with_retry(stash, query, variables, cfg)
-        cleared += len(batch)
+        result = _call_with_retry(stash, query, variables, cfg)
+        cleared += _count_succeeded(result, len(batch))
     return cleared

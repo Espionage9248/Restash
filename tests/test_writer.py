@@ -84,7 +84,9 @@ class _RecordingStash:
         self.requests = []
     def call_GQL(self, query, variables=None):
         self.requests.append((query, variables))
-        return {}
+        # mimic stashapi: return the data dict with one non-null alias per input
+        return {f"u{k}": {"id": inp.get("id")}
+                for k, inp in enumerate((variables or {}).values())}
 
 def test_write_scores_skips_unchanged_and_batches():
     stash = _RecordingStash()
@@ -97,6 +99,7 @@ def test_write_scores_skips_unchanged_and_batches():
                                 "2026-06-05T09:00:00Z")
     assert stats["skipped"] == 1
     assert stats["written"] == 2
+    assert stats["failed"] == 0
     # one batched request for the 2 writes
     assert len(stash.requests) == 1
     # CRITICAL G3: every input uses custom_fields.partial, never .full
@@ -144,3 +147,36 @@ def test_writer_source_has_no_full_or_rating100():
     src = pathlib.Path(writer.__file__).read_text()
     assert '"full"' not in src and "'full'" not in src
     assert "rating100" not in src
+
+
+class _PartialFailStash:
+    """Mimics stashapi returning HTTP200 + partial data: the aliases listed in
+    null_indices come back null (their update errored), the rest succeed."""
+    def __init__(self, null_indices):
+        self.null_indices = set(null_indices)
+        self.requests = []
+    def call_GQL(self, query, variables=None):
+        self.requests.append((query, variables))
+        return {f"u{k}": (None if k in self.null_indices else {"id": "x"})
+                for k in range(len(variables or {}))}
+
+def test_count_succeeded_counts_non_null_aliases():
+    assert writer._count_succeeded({"u0": {"id": "1"}, "u1": None, "u2": {"id": "3"}}, 3) == 2
+    assert writer._count_succeeded({"u0": {"id": "1"}, "u1": {"id": "2"}}, 2) == 2
+    # unrecognized / non-dict shape: assume all n succeeded (cannot prove failure)
+    assert writer._count_succeeded(None, 4) == 4
+
+def test_write_scores_counts_only_succeeded_aliases():
+    stash = _PartialFailStash(null_indices=[1])   # 2nd update in the batch errors
+    scored = {"1": _ss("1", 10), "2": _ss("2", 20), "3": _ss("3", 30)}
+    cfg = Settings(write_chunk_size=10)
+    stats = writer.write_scores(stash, "scene", scored, {}, cfg, "2026-06-06T00:00:00Z")
+    assert stats["written"] == 2
+    assert stats["failed"] == 1
+    assert stats["would_write"] == 3
+
+def test_clear_scores_counts_only_succeeded_aliases():
+    stash = _PartialFailStash(null_indices=[0])   # 1st removal errors
+    cfg = Settings(write_chunk_size=10)
+    cleared = writer.clear_scores(stash, "scene", ["1", "2", "3"], cfg)
+    assert cleared == 2

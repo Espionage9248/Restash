@@ -144,12 +144,20 @@ def _run_full(stash, settings: config.Settings) -> int:
     log.info(f"Restash full: scenes written={s_stats['written']} "
              f"skipped={s_stats['skipped']}; performers written={p_stats['written']} "
              f"skipped={p_stats['skipped']}; excluded cleared={cleared}.")
+    s_failed, p_failed = s_stats.get("failed", 0), p_stats.get("failed", 0)
+    if s_failed or p_failed:
+        log.error(f"Restash: {s_failed} scene + {p_failed} performer update(s) were "
+                  f"rejected by the server (those IDs were NOT written); re-run to retry.")
+    clear_failed = (len(drop_scene_ids) + len(drop_perf_ids)) - cleared
+    if clear_failed:
+        log.error(f"Restash: {clear_failed} excluded-entity clear(s) were rejected by "
+                  f"the server (restash_* keys remain on those IDs); re-run to retry.")
     if settings.write_limit and not targeted:
         log.info(f"Restash: write_limit={settings.write_limit} active — capped writes "
                  f"(scenes would_write={s_stats['would_write']}, "
                  f"performers would_write={p_stats['would_write']}).")
     log.progress(1.0)
-    return 0
+    return 1 if (s_failed or p_failed or clear_failed) else 0
 
 
 def _run_clear(stash, settings: config.Settings) -> int:
@@ -163,8 +171,12 @@ def _run_clear(stash, settings: config.Settings) -> int:
          + writer.clear_scores(stash, "performer", p_ids, settings))
     log.info(f"Restash clear: removed restash_* from {n} entities "
              f"({len(s_ids)} scenes, {len(p_ids)} performers). Other fields untouched.")
+    failed = (len(s_ids) + len(p_ids)) - n
+    if failed:
+        log.error(f"Restash: {failed} clear(s) were rejected by the server "
+                  f"(restash_* keys remain on those IDs); re-run to retry.")
     log.progress(1.0)
-    return 0
+    return 1 if failed else 0
 
 
 def _has_restash(custom_fields: dict) -> bool:
