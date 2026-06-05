@@ -152,3 +152,37 @@ def test_performer_favorite_bonus_and_rating_blend():
     rated = alg.apply_performer_priors({"p2": 0.0}, favorites=set(),
                                        ratings={"p2": 100}, cfg=Settings())
     assert rated["p2"] > 0   # (100-50)/50*0.5 = +0.5 then tanh
+
+def test_satiation_multiplier_thresholds():
+    cfg = Settings()
+    assert alg.satiation_multiplier(0.10, cfg) == 1.0     # below 25% → no damping
+    assert alg.satiation_multiplier(0.25, cfg) == 1.0     # exactly at threshold
+    assert math.isclose(alg.satiation_multiplier(0.625, cfg), 0.5)  # halfway → 0.5
+    assert alg.satiation_multiplier(1.0, cfg) == 0.3      # total binge floored at 0.3
+
+def test_trailing_shares_sum_to_one_over_window():
+    cfg = Settings()
+    s1 = _scene(id="s1", o_history=[days_ago(1)], o_counter=1, performer_ids=["p1"])
+    s2 = _scene(id="s2", o_history=[days_ago(2)], o_counter=1, performer_ids=["p2"])
+    shares = alg.trailing_category_shares([s1, s2], NOW, cfg, attr="performer_ids")
+    assert math.isclose(shares["p1"] + shares["p2"], 1.0)
+    assert math.isclose(shares["p1"], 0.5)
+
+def test_apply_satiation_damps_only_overexposed_categories():
+    cfg = Settings()
+    # p is binged this week (share 1.0 → ×0.3); q has no recent activity (×1.0)
+    binge = [_scene(id=f"b{i}", o_history=[days_ago(1)], o_counter=1,
+                    performer_ids=["p"]) for i in range(4)]
+    out = alg.apply_satiation({"performers": {"p": 0.8, "q": 0.8}, "tags": {}},
+                              binge, NOW, cfg)
+    assert math.isclose(out["performers"]["p"], 0.8 * 0.3)   # damped to floor
+    assert out["performers"]["q"] == 0.8                     # untouched
+
+def test_quality_prior_in_unit_range_and_rewards_resolution():
+    cfg = Settings()
+    hi = _scene(height=2160, organized=True, marker_count=10)
+    lo = _scene(height=360, organized=False, marker_count=0)
+    qa = alg.quality_prior(hi, dur_median=None, dur_scale=None, cfg=cfg)
+    qb = alg.quality_prior(lo, dur_median=None, dur_scale=None, cfg=cfg)
+    assert 0.0 <= qb <= qa <= 1.0
+    assert qa > qb

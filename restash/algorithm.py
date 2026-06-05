@@ -160,3 +160,87 @@ def apply_performer_priors(zscored: dict[str, float], favorites: set[str],
             adjusted += (ratings[key] - 50) / 50.0 * 0.5
         out[key] = math.tanh(adjusted)
     return out
+
+
+def satiation_multiplier(share: float, cfg: Settings) -> float:
+    """D2: above threshold share, damp toward floor; ≤ threshold → 1.0."""
+    if share <= cfg.satiation_threshold:
+        return 1.0
+    overexposure = clamp((share - cfg.satiation_threshold) /
+                         (1.0 - cfg.satiation_threshold), 0.0, 1.0)
+    return max(cfg.satiation_floor, 1.0 - overexposure)
+
+
+def trailing_category_shares(scenes: list[models.SceneData], now: datetime,
+                             cfg: Settings, attr: str) -> dict[str, float]:
+    """Share of total (undecayed, positive) event value over the trailing window,
+    per category id found in scene.<attr> (a list of ids)."""
+    window = cfg.satiation_window_days
+    per_cat: dict[str, float] = {}
+    total = 0.0
+    for scene in scenes:
+        recent_value = sum(
+            e.value for e in extract_events(scene, cfg)
+            if e.kind in ("play", "o") and age_days(e.timestamp, now) <= window
+        )
+        if recent_value <= 0:
+            continue
+        total += recent_value
+        for cat_id in getattr(scene, attr):
+            per_cat[cat_id] = per_cat.get(cat_id, 0.0) + recent_value
+    if total <= 0:
+        return {}
+    return {k: v / total for k, v in per_cat.items()}
+
+
+def apply_satiation(affinities: dict[str, dict], scenes: list[models.SceneData],
+                    now: datetime, cfg: Settings) -> dict[str, dict]:
+    """D2: multiply each performer/tag affinity by its trailing-window satiation
+    multiplier (mutates and returns `affinities`)."""
+    for cls, attr in (("performers", "performer_ids"), ("tags", "tag_ids")):
+        if cls not in affinities:
+            continue
+        shares = trailing_category_shares(scenes, now, cfg, attr)
+        for key in affinities[cls]:
+            affinities[cls][key] *= satiation_multiplier(shares.get(key, 0.0), cfg)
+    return affinities
+
+
+def _resolution_tier(height: int | None) -> float:
+    if not height:
+        return 0.3
+    if height < 480:
+        return 0.3
+    if height < 720:
+        return 0.5
+    if height < 1080:
+        return 0.7
+    if height < 2160:
+        return 0.9
+    return 1.0
+
+
+def quality_prior(scene: models.SceneData, dur_median: float | None,
+                  dur_scale: float | None, cfg: Settings) -> float:
+    """[0,1] blend: resolution, duration sweet-spot, marker density, organized."""
+    res = _resolution_tier(scene.height)
+    if dur_median and dur_scale and scene.file_duration:
+        z = (scene.file_duration - dur_median) / dur_scale
+        dur = math.exp(-0.5 * z * z)
+    else:
+        dur = 0.5
+    markers = clamp(scene.marker_count / 10.0, 0.0, 1.0)
+    organized = 1.0 if scene.organized else 0.0
+    return clamp(0.4 * res + 0.3 * dur + 0.2 * markers + 0.1 * organized, 0.0, 1.0)
+
+
+def duration_sweet_spot(scenes: list[models.SceneData]) -> tuple[float | None, float | None]:
+    """Median ± MAD of file_duration over scenes with ≥1 o (spec §4.3)."""
+    durs = [s.file_duration for s in scenes
+            if s.o_counter > 0 and s.file_duration and s.file_duration > 0]
+    if len(durs) < 3:
+        return None, None
+    median = statistics.median(durs)
+    mad = statistics.median([abs(d - median) for d in durs])
+    scale = mad * 1.4826 + 1e-9   # MAD→σ-equivalent, avoid /0
+    return median, scale
