@@ -73,14 +73,17 @@ query($filter: FindFilterType) {
 
 
 def _parse_dt(value):
-    if not value:
+    if not value or not isinstance(value, str):
         return None
     text = value.replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(text)
     except ValueError:
-        # date-only (production date)
-        dt = datetime.fromisoformat(text + "T00:00:00+00:00")
+        try:
+            # date-only (production date)
+            dt = datetime.fromisoformat(text + "T00:00:00+00:00")
+        except ValueError:
+            return None   # unparseable: degrade to None, don't abort the read (D10/§7)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt

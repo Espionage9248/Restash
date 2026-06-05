@@ -1,5 +1,6 @@
 import pytest
 import stash_io
+from datetime import datetime, timezone
 
 class FakeStash:
     def __init__(self, schema_types):
@@ -29,8 +30,6 @@ def test_ensure_schema_raises_when_scene_custom_fields_missing():
     with pytest.raises(stash_io.UnsupportedSchema) as ei:
         stash_io.ensure_schema(fake)
     assert "custom_fields" in str(ei.value)
-
-from datetime import datetime, timezone
 
 def test_map_scene_handles_missing_file_and_nulls():
     raw = {"id": "1", "title": None, "play_history": [], "o_history": [],
@@ -78,3 +77,46 @@ def test_fetch_scenes_paginates(monkeypatch):
     scenes = stash_io.fetch_scenes(S(), per_page=1)
     assert [s.id for s in scenes] == ["1", "2"]
     assert calls["n"] >= 3   # two pages + the empty terminator
+
+
+def test_parse_dt_degrades_on_bad_input_without_raising():
+    # malformed / non-string / empty must return None, never raise (D10/§7 robustness)
+    assert stash_io._parse_dt("N/A") is None
+    assert stash_io._parse_dt("2026/01/01 12:00") is None
+    assert stash_io._parse_dt(1234567890) is None
+    assert stash_io._parse_dt(None) is None
+    assert stash_io._parse_dt("") is None
+    # a valid date-only string still parses to tz-aware UTC midnight
+    d = stash_io._parse_dt("2025-01-01")
+    assert d == datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+def test_map_performer_handles_nulls_and_extracts_fields():
+    raw = {"id": 7, "name": None, "favorite": True, "rating100": None,
+           "o_counter": 0, "scene_count": 3, "created_at": "2026-01-01T00:00:00Z",
+           "tags": [{"id": "t1"}, {"id": "t2"}], "custom_fields": {"k": "v"}}
+    p = stash_io.map_performer(raw)
+    assert p.id == "7"            # coerced to str
+    assert p.name == ""           # null → ""
+    assert p.favorite is True
+    assert p.rating100 is None
+    assert p.scene_count == 3
+    assert p.tag_ids == ["t1", "t2"]
+    assert p.created_at == datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert p.custom_fields == {"k": "v"}
+
+def test_fetch_performers_paginates(monkeypatch):
+    pages = [
+        [{"id": "1", "created_at": "2026-01-01T00:00:00Z"}],
+        [{"id": "2", "created_at": "2026-01-01T00:00:00Z"}],
+        [],
+    ]
+    calls = {"n": 0}
+    class S:
+        def call_GQL(self, query, variables=None):
+            idx = variables["filter"]["page"] - 1
+            data = pages[idx] if idx < len(pages) else []
+            calls["n"] += 1
+            return {"findPerformers": {"performers": data}}
+    performers = stash_io.fetch_performers(S(), per_page=1)
+    assert [p.id for p in performers] == ["1", "2"]
+    assert calls["n"] >= 3
