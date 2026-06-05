@@ -141,3 +141,40 @@ def test_stash_io_contains_no_mutations():
     for forbidden in ("sceneUpdate", "bulkSceneUpdate", "performerUpdate",
                       "bulkPerformerUpdate", "mutation"):
         assert forbidden not in src, f"write path leaked into stash_io: {forbidden}"
+
+import models as _models
+from datetime import datetime as _dt, timezone as _tz
+
+def _sd(id, has_file=True, tag_ids=None):
+    return _models.SceneData(
+        id=id, title="t", play_history=[], o_history=[], play_count=0,
+        o_counter=0, play_duration=0.0, resume_time=None, last_played_at=None,
+        file_duration=100.0 if has_file else None, height=1080, marker_count=0,
+        organized=False, date=None, created_at=_dt(2026, 1, 1, tzinfo=_tz.utc),
+        rating100=None, tag_ids=tag_ids or [], performer_ids=[], studio_id=None,
+        custom_fields={}, has_file=has_file)
+
+def _pd(id, tag_ids=None):
+    return _models.PerformerData(
+        id=id, name="N", favorite=False, rating100=None, o_counter=0,
+        scene_count=0, tag_ids=tag_ids or [], created_at=_dt(2026, 1, 1, tzinfo=_tz.utc),
+        custom_fields={})
+
+def test_filter_excluded_none_drops_fileless_scenes_keeps_all_performers():
+    scenes = [_sd("s1", has_file=True), _sd("s2", has_file=False)]
+    performers = [_pd("p1"), _pd("p2", tag_ids=["99"])]
+    kept_scenes, kept_perf = stash_io.filter_excluded(scenes, performers, None)
+    assert [s.id for s in kept_scenes] == ["s1"]          # fileless dropped
+    assert [p.id for p in kept_perf] == ["p1", "p2"]      # performers untouched when no exclude id
+
+def test_filter_excluded_drops_tagged_scenes_and_performers():
+    scenes = [_sd("keep", tag_ids=["1"]), _sd("excl", tag_ids=["99"]),
+              _sd("nofile", has_file=False, tag_ids=["1"])]
+    performers = [_pd("pk", tag_ids=["1"]), _pd("pe", tag_ids=["99"])]
+    kept_scenes, kept_perf = stash_io.filter_excluded(scenes, performers, "99")
+    assert [s.id for s in kept_scenes] == ["keep"]        # excl(tagged) + nofile dropped
+    assert [p.id for p in kept_perf] == ["pk"]            # pe(tagged) dropped
+
+def test_filter_excluded_returns_tuple_of_two_lists():
+    out = stash_io.filter_excluded([], [], None)
+    assert out == ([], [])
