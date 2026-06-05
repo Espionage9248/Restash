@@ -303,3 +303,32 @@ def test_favorite_floor_at_60th_percentile():
     performers[0].favorite = True   # p0 would otherwise rank low/mid
     ps = alg.score_performers(performers, scenes, ss, aff, cfg, NOW)
     assert ps["p0"].restash_score >= 60
+
+
+def test_empty_library_does_not_crash():
+    assert alg.score_scenes([], Settings(), NOW, "2026-06-05") == {}
+
+def test_scene_with_no_file_duration_and_zero_history():
+    cfg = Settings()
+    s = _scene(id="x", file_duration=None, height=None, created_at=days_ago(5))
+    scores = alg.score_scenes([s], cfg, NOW, "2026-06-05")
+    assert scores["x"].restash_score >= 1   # novelty + quality, no crash
+
+def test_fresh_library_all_zero_history_scores_by_prior_and_novelty():
+    cfg = Settings()
+    scenes = [_scene(id=f"n{i}", height=1080 + i, created_at=days_ago(i + 1))
+              for i in range(5)]
+    scores = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    assert len(scores) == 5
+    assert all(s.n_events == 0 for s in scores.values())
+
+def test_next_day_differs_only_by_jitter_drift():
+    cfg = Settings()
+    scenes = [_scene(id=f"s{i}", o_history=[days_ago(50)], o_counter=1,
+                     performer_ids=["p"]) for i in range(20)]
+    today = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    tomorrow = alg.score_scenes(scenes, cfg, NOW, "2026-06-06")
+    # different seed → at least some ranks move, but bounded set of ids unchanged
+    assert set(today) == set(tomorrow)
+    moved = sum(today[k].restash_score != tomorrow[k].restash_score for k in today)
+    assert moved >= 1
