@@ -64,6 +64,13 @@ class Settings:
     # scenes), so a performer with a single strong scene (e.g. a whole ensemble cast
     # of one film) can't sit at the ceiling. Higher k = stronger pull toward the mean.
     perf_scenes_shrinkage_k: float = 3.0
+    # D13 (sim finding 2026-06-05): the 90-day taste half-life was decaying a scene's
+    # OWN evidence faster than the rediscovery curve could lift it, so beloved-but-
+    # -dormant scenes faded instead of resurfacing. Give per-scene direct evidence a
+    # slower half-life than the (taste-evolving) affinity model, and a stronger
+    # rediscovery bonus, so old favourites genuinely climb back. Both tunable.
+    direct_half_life_days: float = 365.0
+    rediscovery_bonus: float = 0.40
 
     @classmethod
     def from_plugin_settings(cls, plugin_cfg: dict | None) -> "Settings":

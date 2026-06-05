@@ -83,9 +83,9 @@ def test_freshness_curve_shape():
     assert alg.freshness(1.9, cfg) == -0.9
     assert math.isclose(alg.freshness(21, cfg), 0.0, abs_tol=1e-9)   # cooldown end
     assert alg.freshness(11.5, cfg) < 0           # mid-cooldown still negative
-    assert alg.freshness(180, cfg) == 0.25        # full rediscovery
-    assert alg.freshness(5000, cfg) == 0.25       # capped
-    assert 0 < alg.freshness(100, cfg) < 0.25     # rediscovery ramp
+    assert alg.freshness(180, cfg) == cfg.rediscovery_bonus   # full rediscovery (D13)
+    assert alg.freshness(5000, cfg) == cfg.rediscovery_bonus  # capped
+    assert 0 < alg.freshness(100, cfg) < cfg.rediscovery_bonus  # rediscovery ramp
 
 def test_freshness_is_monotonic_nondecreasing_after_2_days():
     cfg = Settings()
@@ -397,3 +397,38 @@ def test_performer_shrinkage_k_zero_is_noop():
     ps = alg.score_performers([_perf(id="solo"), _perf(id="low")], scenes,
                               scene_scores, aff, cfg, NOW)
     assert ps["solo"].components["scenes"] == 1.0   # unshrunk
+
+
+def test_freshness_rediscovery_bonus_is_configurable():
+    # D13: the rediscovery ceiling is the tunable bonus, not a hardcoded 0.25.
+    assert alg.freshness(180, Settings(rediscovery_bonus=0.40)) == 0.40
+    assert alg.freshness(180, Settings(rediscovery_bonus=0.25)) == 0.25
+
+def test_direct_half_life_decoupled_from_taste():
+    # D13: a year-old single-o scene keeps more direct evidence under the longer
+    # direct half-life than under a 90-day one.
+    aff = {"performers": {}, "tags": {}, "studios": {}}
+    s = _scene(id="x", o_history=[days_ago(365)], o_counter=1)
+    long_direct = alg.scene_base(s, aff, {}, None, None,
+                                 Settings(direct_half_life_days=365.0), NOW)["direct"]
+    short_direct = alg.scene_base(s, aff, {}, None, None,
+                                  Settings(direct_half_life_days=90.0), NOW)["direct"]
+    assert long_direct > short_direct
+
+def test_rediscovery_resurfaces_old_favorite_above_post_cooldown_level():
+    # D13: with the default tuning, a loved scene is buried right after watching,
+    # recovers by the cooldown end, and climbs ABOVE that level months later.
+    cfg = Settings()
+    aff = {"performers": {"p1": 0.6}, "tags": {}, "studios": {}}
+
+    def final_at(days):
+        s = _scene(id="x", play_history=[days_ago(days)], o_history=[days_ago(days)],
+                   play_count=1, o_counter=1, play_duration=1500.0, resume_time=1400.0,
+                   file_duration=1500.0, performer_ids=["p1"])
+        comp = alg.scene_base(s, aff, {}, None, None, cfg, NOW)
+        f = alg.freshness(days, cfg)
+        return comp["base"] + f * abs(comp["base"]) * cfg.fresh_weight
+
+    just, post_cooldown, rediscovery = final_at(0), final_at(21), final_at(150)
+    assert just < post_cooldown          # buried right after watching
+    assert rediscovery > post_cooldown   # genuinely resurfaces months later

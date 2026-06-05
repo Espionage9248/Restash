@@ -71,7 +71,7 @@ def n_events(events: list[Event]) -> int:
 
 
 def freshness(d_days: float, cfg: Settings) -> float:
-    """Cooldown→rediscovery curve, in [-0.9, +0.25]."""
+    """Cooldown→rediscovery curve, in [-0.9, +cfg.rediscovery_bonus] (D13)."""
     if d_days < cfg.just_watched_days:
         return -0.9
     if d_days < cfg.cooldown_days:
@@ -79,10 +79,10 @@ def freshness(d_days: float, cfg: Settings) -> float:
                     (d_days - cfg.just_watched_days) /
                     (cfg.cooldown_days - cfg.just_watched_days))
     if d_days < cfg.rediscovery_max_days:
-        return lerp(0.0, 0.25,
+        return lerp(0.0, cfg.rediscovery_bonus,
                     (d_days - cfg.cooldown_days) /
                     (cfg.rediscovery_max_days - cfg.cooldown_days))
-    return 0.25
+    return cfg.rediscovery_bonus
 
 
 def novelty(library_age_days: float, cfg: Settings) -> float:
@@ -315,7 +315,9 @@ def scene_base(scene: models.SceneData, aff: dict[str, dict],
 
     events = extract_events(scene, cfg)
     ne = n_events(events)
-    dsum = decayed_event_sum(events, now, cfg.taste_half_life_days)
+    # D13: per-scene "loved-ness" fades on its own (longer) half-life, decoupled from
+    # the taste-model half-life used in build_affinities, so rediscovery can resurface.
+    dsum = decayed_event_sum(events, now, cfg.direct_half_life_days)
     direct = math.tanh(dsum / cfg.direct_scale)
     confidence = min(1.0, ne / cfg.confidence_events)
     base = confidence * direct + (1.0 - confidence) * ingredients
