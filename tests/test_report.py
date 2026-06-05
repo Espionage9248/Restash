@@ -48,3 +48,28 @@ def test_performer_report_respects_top_n():
     # only top 3 (scores 9,8,7) appear as score-prefixed rows
     assert "[  9]" in text and "[  8]" in text and "[  7]" in text
     assert "[  6]" not in text
+
+
+def test_watched_diagnostic_shows_summary_and_rows():
+    rows = [{"title": "Watched A", "score": 72, "n_events": 3, "fresh": -0.9,
+             "fresh_d": 1.0, "direct": 0.55, "confidence": 0.6, "completion": 0.95,
+             "resume_time": 0.0, "file_duration": 1800.0, "penalty": True,
+             "play_count": 2, "o_counter": 1}]
+    summary = {"watched": 50, "penalty": 7, "penalty_high_completion": 3,
+               "resume_zero": 12, "resume_zero_penalty": 3}
+    text = report.format_watched_diagnostic(rows, summary, top_n=20)
+    assert "WATCHED-SCENE DIAGNOSTIC" in text
+    assert "watched scenes (n_events>0): 50" in text
+    assert "SUSPICIOUS" in text and "3" in text
+    assert "Watched A" in text and "penalty=YES" in text
+    assert "completion=0.95" in text
+
+def test_watched_diagnostic_handles_none_fresh_d_and_resume():
+    rows = [{"title": "B", "score": 40, "n_events": 1, "fresh": 0.1,
+             "fresh_d": None, "direct": 0.2, "confidence": 0.2, "completion": 0.25,
+             "resume_time": None, "file_duration": None, "penalty": False,
+             "play_count": 1, "o_counter": 0}]
+    summary = {"watched": 1, "penalty": 0, "penalty_high_completion": 0,
+               "resume_zero": 0, "resume_zero_penalty": 0}
+    text = report.format_watched_diagnostic(rows, summary)
+    assert "fresh_d=None" in text and "resume=None/None" in text

@@ -67,11 +67,51 @@ def _run_dry(stash, settings: config.Settings) -> int:
     names = {p.id: p.name for p in performers}
     print(report.format_scene_report(scene_scores, titles, top_n=30))
     print(report.format_performer_report(performer_scores, names, top_n=30))
+    diag_rows, diag_summary = _watched_diagnostic(scenes, scene_scores, settings)
+    print(report.format_watched_diagnostic(diag_rows, diag_summary, top_n=20))
     print(report.format_summary(len(scene_scores), len(performer_scores),
                                 would_write=len(scene_scores) + len(performer_scores),
                                 skipped=0))
     log.progress(1.0)
     return 0
+
+
+def _watched_diagnostic(scenes, scene_scores, settings, top_n: int = 20):
+    """Gather read-only diagnostics for watched scenes (n_events>0): freshness,
+    direct evidence, completion, and whether the abandonment penalty fired.
+    Pure analysis over already-fetched data — no Stash calls, no writes."""
+    rows = []
+    penalty = penalty_high_comp = resume_zero = resume_zero_penalty = 0
+    for s in scenes:
+        sc = scene_scores.get(s.id)
+        if sc is None or sc.n_events == 0:
+            continue
+        events = algorithm.extract_events(s, settings)
+        fired = any(e.kind == "penalty" for e in events)
+        comp = algorithm.completion_factor(s.play_duration, s.play_count,
+                                           s.file_duration, settings.completion_floor)
+        if fired:
+            penalty += 1
+            if comp >= 0.70:
+                penalty_high_comp += 1
+        if s.resume_time == 0.0:
+            resume_zero += 1
+            if fired:
+                resume_zero_penalty += 1
+        rows.append({
+            "title": s.title or s.id, "score": sc.restash_score,
+            "n_events": sc.n_events, "fresh": sc.components.get("fresh"),
+            "fresh_d": sc.components.get("fresh_d"), "direct": sc.components.get("direct"),
+            "confidence": sc.components.get("confidence"), "completion": comp,
+            "resume_time": s.resume_time, "file_duration": s.file_duration,
+            "penalty": fired, "play_count": s.play_count, "o_counter": s.o_counter,
+        })
+    rows.sort(key=lambda r: r["direct"] if r["direct"] is not None else 0.0,
+              reverse=True)
+    summary = {"watched": len(rows), "penalty": penalty,
+               "penalty_high_completion": penalty_high_comp,
+               "resume_zero": resume_zero, "resume_zero_penalty": resume_zero_penalty}
+    return rows[:top_n], summary
 
 
 def main() -> int:
