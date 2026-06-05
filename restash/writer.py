@@ -70,3 +70,32 @@ def _call_with_retry(stash, query: str, variables: dict, cfg):
             if attempt < cfg.write_max_retries:
                 time.sleep(cfg.write_backoff_base * (2 ** attempt))
     raise last_exc
+
+
+def write_scores(stash, entity: str, scored: dict, existing_custom_fields: dict,
+                 cfg, now_iso: str) -> dict:
+    """Partial-write restash_* for changed entities only, in aliased batches.
+    `scored` maps id → SceneScore/PerformerScore; `existing_custom_fields` maps id →
+    that entity's current custom_fields (for skip-unchanged). Honors write_limit
+    (subset-first gate). Returns {written, skipped, would_write}."""
+    build = scene_partial if entity == "scene" else performer_partial
+    pending = []
+    skipped = 0
+    for eid, score in scored.items():
+        partial = build(score, now_iso)
+        if not needs_write(existing_custom_fields.get(eid) or {}, partial):
+            skipped += 1
+            continue
+        pending.append({"id": str(eid), "custom_fields": {"partial": partial}})
+
+    would_write = len(pending)
+    if cfg.write_limit and would_write > cfg.write_limit:
+        pending = pending[:cfg.write_limit]
+
+    written = 0
+    for batch in _chunks(pending, cfg.write_chunk_size):
+        query = aliased_update_mutation(entity, len(batch))
+        variables = {f"i{k}": inp for k, inp in enumerate(batch)}
+        _call_with_retry(stash, query, variables, cfg)
+        written += len(batch)
+    return {"written": written, "skipped": skipped, "would_write": would_write}

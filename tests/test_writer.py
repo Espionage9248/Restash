@@ -78,3 +78,45 @@ def test_call_with_retry_raises_after_exhausting(monkeypatch):
         writer._call_with_retry(stash, "q", {}, cfg)
     assert stash.calls == cfg.write_max_retries + 1   # initial + retries
     assert sleeps == [0.5, 1.0, 2.0]   # no sleep on the final (exhausting) attempt
+
+class _RecordingStash:
+    def __init__(self):
+        self.requests = []
+    def call_GQL(self, query, variables=None):
+        self.requests.append((query, variables))
+        return {}
+
+def test_write_scores_skips_unchanged_and_batches():
+    stash = _RecordingStash()
+    scored = {"1": _ss("1", 80), "2": _ss("2", 90), "3": _ss("3", 70)}
+    existing = {"1": {"restash_score": 80},        # unchanged → skip
+                "2": {"restash_score": 5, "user_note": "keep"},  # changed → write
+                "3": {}}                            # never scored → write
+    cfg = Settings(write_chunk_size=10)
+    stats = writer.write_scores(stash, "scene", scored, existing, cfg,
+                                "2026-06-05T09:00:00Z")
+    assert stats["skipped"] == 1
+    assert stats["written"] == 2
+    # one batched request for the 2 writes
+    assert len(stash.requests) == 1
+    # CRITICAL G3: every input uses custom_fields.partial, never .full
+    _, variables = stash.requests[0]
+    for inp in variables.values():
+        assert "partial" in inp["custom_fields"]
+        assert "full" not in inp["custom_fields"]
+
+def test_write_scores_respects_chunk_size():
+    stash = _RecordingStash()
+    scored = {str(i): _ss(str(i), i % 100 + 1) for i in range(250)}
+    cfg = Settings(write_chunk_size=100)
+    stats = writer.write_scores(stash, "scene", scored, {}, cfg, "2026-06-05T09:00:00Z")
+    assert stats["written"] == 250
+    assert len(stash.requests) == 3   # 100 + 100 + 50
+
+def test_write_scores_limit_caps_writes_for_subset_first():
+    stash = _RecordingStash()
+    scored = {str(i): _ss(str(i), i % 100 + 1) for i in range(50)}
+    cfg = Settings(write_limit=5, write_chunk_size=100)
+    stats = writer.write_scores(stash, "scene", scored, {}, cfg, "2026-06-05T09:00:00Z")
+    assert stats["written"] == 5
+    assert stats["would_write"] == 50
