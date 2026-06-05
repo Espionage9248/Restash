@@ -186,3 +186,34 @@ def test_quality_prior_in_unit_range_and_rewards_resolution():
     qb = alg.quality_prior(lo, dur_median=None, dur_scale=None, cfg=cfg)
     assert 0.0 <= qb <= qa <= 1.0
     assert qa > qb
+
+def test_build_affinities_returns_three_classes_in_unit_range():
+    cfg = Settings()
+    scenes = [
+        _scene(id="a", o_history=[days_ago(1)], o_counter=1,
+               performer_ids=["p1"], tag_ids=["t1"], studio_id="st1"),
+        _scene(id="b", play_history=[days_ago(1)], play_count=1, play_duration=90.0,
+               performer_ids=["p2"], tag_ids=["t2"], studio_id="st2"),
+    ]
+    aff = alg.build_affinities(scenes, NOW, cfg, favorites=set(), ratings={})
+    for cls in ("performers", "tags", "studios"):
+        assert all(-1.0 <= v <= 1.0 for v in aff[cls].values())
+    assert aff["performers"]["p1"] > aff["performers"]["p2"]  # o beats play
+
+def test_scene_base_blends_by_confidence():
+    cfg = Settings()
+    aff = {"performers": {"p1": 0.8}, "tags": {}, "studios": {}}
+    tagcounts = {}
+    # scene with lots of direct o-history → confidence high → direct dominates
+    hot = _scene(id="h", o_history=[days_ago(1)] * 6, o_counter=6, performer_ids=["p1"])
+    comp = alg.scene_base(hot, aff, tagcounts, None, None, cfg, NOW)
+    assert comp["confidence"] == 1.0
+    assert comp["base"] > 0.5
+
+def test_scene_base_uses_ingredients_when_no_history():
+    cfg = Settings()
+    aff = {"performers": {"p1": 0.9}, "tags": {}, "studios": {}}
+    cold = _scene(id="c", performer_ids=["p1"])   # no events
+    comp = alg.scene_base(cold, aff, {}, None, None, cfg, NOW)
+    assert comp["confidence"] == 0.0
+    assert math.isclose(comp["base"], comp["ingredients"])

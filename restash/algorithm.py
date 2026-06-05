@@ -244,3 +244,79 @@ def duration_sweet_spot(scenes: list[models.SceneData]) -> tuple[float | None, f
     mad = statistics.median([abs(d - median) for d in durs])
     scale = mad * 1.4826 + 1e-9   # MAD→σ-equivalent, avoid /0
     return median, scale
+
+
+def build_affinities(scenes: list[models.SceneData], now: datetime, cfg: Settings,
+                     favorites: set[str], ratings: dict[str, int]) -> dict[str, dict]:
+    """Returns {'performers':{id:aff}, 'tags':{...}, 'studios':{...}}, each in [-1,1],
+    with satiation (D2) already applied to performers and tags."""
+    classes = {"performers": ("performer_ids", True), "tags": ("tag_ids", True),
+               "studios": ("studio_id", False)}
+    value_sums = {c: {} for c in classes}
+    exposure = {c: {} for c in classes}
+
+    for scene in scenes:
+        dsum = decayed_event_sum(extract_events(scene, cfg), now,
+                                 cfg.taste_half_life_days)
+        for cls, (attr, is_list) in classes.items():
+            ids = getattr(scene, attr)
+            ids = ids if is_list else ([ids] if ids else [])
+            for key in ids:
+                value_sums[cls][key] = value_sums[cls].get(key, 0.0) + dsum
+                exposure[cls][key] = exposure[cls].get(key, 0) + 1
+
+    result: dict[str, dict] = {}
+    for cls in classes:
+        zscores = _zscores(affinity_raw(value_sums[cls], exposure[cls]))
+        if cls == "performers":
+            result[cls] = apply_performer_priors(zscores, favorites, ratings, cfg)
+        else:
+            result[cls] = {k: math.tanh(z) for k, z in zscores.items()}
+
+    return apply_satiation(result, scenes, now, cfg)   # D2, performers + tags
+
+
+def _mean_top_n(values: list[float], n: int) -> float:
+    if not values:
+        return 0.0
+    top = sorted(values, reverse=True)[:n]
+    return sum(top) / len(top)
+
+
+def scene_base(scene: models.SceneData, aff: dict[str, dict],
+               tag_scene_counts: dict[str, int], dur_median: float | None,
+               dur_scale: float | None, cfg: Settings, now: datetime) -> dict:
+    """Returns a components dict including 'ingredients', 'direct', 'confidence',
+    'base' and the sub-parts, all on the [-1,1] scale (quality centered, D1)."""
+    perf_affs = [aff["performers"].get(p, 0.0) for p in scene.performer_ids]
+    perf_term = _mean_top_n(perf_affs, 3)
+
+    if scene.tag_ids:
+        num = den = 0.0
+        for t in scene.tag_ids:
+            w = 1.0 / math.log2(2 + tag_scene_counts.get(t, 1))
+            num += w * aff["tags"].get(t, 0.0)
+            den += w
+        tag_term = num / den if den else 0.0
+    else:
+        tag_term = 0.0
+
+    studio_term = aff["studios"].get(scene.studio_id, 0.0) if scene.studio_id else 0.0
+    quality01 = quality_prior(scene, dur_median, dur_scale, cfg)
+    quality_term = 2.0 * quality01 - 1.0   # center to [-1,1] (D1 consistency)
+
+    ingredients = (cfg.ingredient_w_perf * perf_term
+                   + cfg.ingredient_w_tag * tag_term
+                   + cfg.ingredient_w_studio * studio_term
+                   + cfg.ingredient_w_quality * quality_term)
+
+    events = extract_events(scene, cfg)
+    ne = n_events(events)
+    dsum = decayed_event_sum(events, now, cfg.taste_half_life_days)
+    direct = math.tanh(dsum / cfg.direct_scale)
+    confidence = min(1.0, ne / cfg.confidence_events)
+    base = confidence * direct + (1.0 - confidence) * ingredients
+
+    return {"perf": perf_term, "tag": tag_term, "studio": studio_term,
+            "quality": quality_term, "ingredients": ingredients, "direct": direct,
+            "confidence": confidence, "base": base, "n_events": ne}
