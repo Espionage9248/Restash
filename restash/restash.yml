@@ -1,0 +1,28 @@
+name: Restash
+description: Computes a freshness score for scenes and performers into custom fields.
+version: 0.1.0
+url: https://github.com/Espionage9248/restash
+exec:
+  - python
+  - "{pluginDir}/restash.py"
+interface: raw
+settings:
+  tasteHalfLifeDays:    { displayName: Taste half-life (days), type: NUMBER }
+  cooldownDays:         { displayName: Cooldown period (days), type: NUMBER }
+  freshWeight:          { displayName: Freshness strength, type: NUMBER }
+  wildcardPercent:      { displayName: Wildcard %, type: NUMBER }
+  respectManualRatings: { displayName: Blend manual ratings as a taste prior, type: BOOLEAN }
+  excludeTagName:       { displayName: Exclusion tag name, type: STRING }
+tasks:
+  - name: Dry Run Report
+    description: Full compute, writes nothing, logs top-30 scenes/performers with score breakdowns. Run this first.
+    defaultArgs: { mode: dry }
+  - name: Recompute All
+    description: Read everything, rebuild the taste model, and write freshness scores to scenes + performers (custom_fields). Skips unchanged.
+    defaultArgs: { mode: full }
+  - name: Quick Refresh
+    description: (Not yet implemented — planned for a future release) Fast re-score from a cached taste model
+    defaultArgs: { mode: refresh }
+  - name: Clear Restash Data
+    description: Remove all Restash custom fields (restash_*) from scenes + performers. Other fields and ratings are left untouched.
+    defaultArgs: { mode: clear }
