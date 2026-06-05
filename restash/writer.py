@@ -36,3 +36,22 @@ def needs_write(existing_custom_fields: dict, new_partial: dict) -> bool:
     if existing is None:
         return True
     return str(existing) != str(new_partial.get("restash_score"))
+
+
+_UPDATE_FIELD = {"scene": ("sceneUpdate", "SceneUpdateInput"),
+                 "performer": ("performerUpdate", "PerformerUpdateInput")}
+
+
+def aliased_update_mutation(entity: str, n: int) -> str:
+    """Build a single GraphQL mutation with n aliased <entity>Update calls, each
+    taking its own input variable ($i0, $i1, ...). Works for both partial-write
+    and remove inputs (the input shape is decided by the caller's variables)."""
+    field, itype = _UPDATE_FIELD[entity]
+    decls = ", ".join(f"$i{k}: {itype}!" for k in range(n))
+    body = "\n".join(f"  u{k}: {field}(input: $i{k}) {{ id }}" for k in range(n))
+    return f"mutation({decls}) {{\n{body}\n}}"
+
+
+def _chunks(seq, size):
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]

@@ -31,3 +31,18 @@ def test_needs_write_skips_when_score_unchanged():
     assert writer.needs_write({"restash_score": 49}, new) is True      # changed
     assert writer.needs_write({}, new) is True                         # never scored
     assert writer.needs_write({"foo": "bar"}, new) is True             # only foreign keys
+
+def test_aliased_mutation_uses_partial_not_full():
+    q = writer.aliased_update_mutation("scene", 2)
+    assert "sceneUpdate(input: $i0)" in q and "sceneUpdate(input: $i1)" in q
+    assert "$i0: SceneUpdateInput!" in q and "$i1: SceneUpdateInput!" in q
+    assert q.strip().startswith("mutation(")
+
+def test_aliased_mutation_performer_type():
+    q = writer.aliased_update_mutation("performer", 1)
+    assert "performerUpdate(input: $i0)" in q
+    assert "$i0: PerformerUpdateInput!" in q
+
+def test_chunks_splits_evenly_and_remainder():
+    assert list(writer._chunks([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
+    assert list(writer._chunks([], 2)) == []
