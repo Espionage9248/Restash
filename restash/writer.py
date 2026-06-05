@@ -99,3 +99,16 @@ def write_scores(stash, entity: str, scored: dict, existing_custom_fields: dict,
         _call_with_retry(stash, query, variables, cfg)
         written += len(batch)
     return {"written": written, "skipped": skipped, "would_write": would_write}
+
+
+def clear_scores(stash, entity: str, ids: list, cfg) -> int:
+    """Remove all restash_* keys from the given entities via CustomFieldsInput.remove
+    (v0.30+), in aliased batches. Leaves every other custom field untouched."""
+    inputs = [{"id": str(i), "custom_fields": {"remove": RESTASH_KEYS}} for i in ids]
+    cleared = 0
+    for batch in _chunks(inputs, cfg.write_chunk_size):
+        query = aliased_update_mutation(entity, len(batch))
+        variables = {f"i{k}": inp for k, inp in enumerate(batch)}
+        _call_with_retry(stash, query, variables, cfg)
+        cleared += len(batch)
+    return cleared

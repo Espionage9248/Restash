@@ -120,3 +120,27 @@ def test_write_scores_limit_caps_writes_for_subset_first():
     stats = writer.write_scores(stash, "scene", scored, {}, cfg, "2026-06-05T09:00:00Z")
     assert stats["written"] == 5
     assert stats["would_write"] == 50
+
+def test_clear_scores_uses_remove_with_restash_keys():
+    stash = _RecordingStash()
+    cfg = Settings(write_chunk_size=2)
+    n = writer.clear_scores(stash, "scene", ["1", "2", "3"], cfg)
+    assert n == 3
+    assert len(stash.requests) == 2   # 2 + 1
+    _, variables = stash.requests[0]
+    for inp in variables.values():
+        assert inp["custom_fields"]["remove"] == writer.RESTASH_KEYS
+        assert "partial" not in inp["custom_fields"]
+        assert "full" not in inp["custom_fields"]
+
+def test_clear_scores_empty_is_noop():
+    stash = _RecordingStash()
+    assert writer.clear_scores(stash, "scene", [], Settings()) == 0
+    assert stash.requests == []
+
+def test_writer_source_has_no_full_or_rating100():
+    # G3: the write layer must never use CustomFieldsInput.full or touch rating100.
+    import pathlib
+    src = pathlib.Path(writer.__file__).read_text()
+    assert '"full"' not in src and "'full'" not in src
+    assert "rating100" not in src
