@@ -6,6 +6,7 @@ import algorithm
 import config
 import report
 import stash_io
+import writer
 from stashapi import log   # stashapp-tools logging → drives Stash progress bar
 
 
@@ -15,6 +16,8 @@ def parse_input(payload: dict):
     conn = payload.get("server_connection") or {}
     plugin_cfg = payload.get("plugin_config") or args
     settings = config.Settings.from_plugin_settings(plugin_cfg)
+    if "write_limit" in args:
+        settings.write_limit = int(args["write_limit"])
     return mode, conn, settings
 
 
@@ -26,9 +29,12 @@ def run(payload: dict) -> int:
              f"remove={caps['custom_fields_remove']}). mode={mode}")
     if mode == "dry":
         return _run_dry(stash, settings)
-    if mode in ("full", "refresh", "clear"):
-        log.info(f"Restash: mode '{mode}' is not implemented in this build "
-                 f"(dry-run-only). Nothing written.")
+    if mode == "full":
+        return _run_full(stash, settings)
+    if mode == "clear":
+        return _run_clear(stash, settings)
+    if mode == "refresh":
+        log.info("Restash: 'refresh' is not implemented in this build (Phase 6).")
         return 0
     log.error(f"Restash: unknown mode '{mode}'.")
     return 1
@@ -74,6 +80,81 @@ def _run_dry(stash, settings: config.Settings) -> int:
                                 skipped=0))
     log.progress(1.0)
     return 0
+
+
+def _run_full(stash, settings: config.Settings) -> int:
+    now = stash_io.utcnow()
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    date_seed = now.strftime("%Y-%m-%d")
+
+    log.progress(0.05)
+    scenes = stash_io.fetch_scenes(stash)
+    performers = stash_io.fetch_performers(stash)
+    log.info(f"Restash: read {len(scenes)} scenes / {len(performers)} performers.")
+    log.progress(0.45)
+
+    exclude_id = stash_io.resolve_tag_id(stash, settings.exclude_tag_name)
+    kept_scenes, kept_performers = stash_io.filter_excluded(scenes, performers, exclude_id)
+    kept_scene_ids = {s.id for s in kept_scenes}
+    kept_perf_ids = {p.id for p in kept_performers}
+    log.info(f"Restash: scoring {len(kept_scenes)} scenes / {len(kept_performers)} "
+             f"performers (exclude tag id={exclude_id}).")
+
+    favorites = {p.id for p in kept_performers if p.favorite}
+    ratings = ({p.id: p.rating100 for p in kept_performers if p.rating100 is not None}
+               if settings.respect_manual_ratings else {})
+
+    aff = algorithm.build_affinities(kept_scenes, now, settings, favorites, ratings)
+    scene_scores = algorithm.score_scenes(kept_scenes, settings, now, date_seed,
+                                          favorites, ratings, aff)
+    performer_scores = algorithm.score_performers(kept_performers, kept_scenes,
+                                                  scene_scores, aff, settings, now)
+    log.progress(0.70)
+
+    existing_scene_cf = {s.id: s.custom_fields for s in kept_scenes}
+    existing_perf_cf = {p.id: p.custom_fields for p in kept_performers}
+    s_stats = writer.write_scores(stash, "scene", scene_scores, existing_scene_cf,
+                                  settings, now_iso)
+    p_stats = writer.write_scores(stash, "performer", performer_scores, existing_perf_cf,
+                                  settings, now_iso)
+    log.progress(0.90)
+
+    # D8: drop restash_* from entities now excluded but previously scored.
+    drop_scene_ids = [s.id for s in scenes
+                      if s.id not in kept_scene_ids and _has_restash(s.custom_fields)]
+    drop_perf_ids = [p.id for p in performers
+                     if p.id not in kept_perf_ids and _has_restash(p.custom_fields)]
+    cleared = (writer.clear_scores(stash, "scene", drop_scene_ids, settings)
+               + writer.clear_scores(stash, "performer", drop_perf_ids, settings))
+
+    log.info(f"Restash full: scenes written={s_stats['written']} "
+             f"skipped={s_stats['skipped']}; performers written={p_stats['written']} "
+             f"skipped={p_stats['skipped']}; excluded cleared={cleared}.")
+    if settings.write_limit:
+        log.info(f"Restash: write_limit={settings.write_limit} active — capped writes "
+                 f"(scenes would_write={s_stats['would_write']}, "
+                 f"performers would_write={p_stats['would_write']}).")
+    log.progress(1.0)
+    return 0
+
+
+def _run_clear(stash, settings: config.Settings) -> int:
+    log.progress(0.05)
+    scenes = stash_io.fetch_scenes(stash)
+    performers = stash_io.fetch_performers(stash)
+    s_ids = [s.id for s in scenes if _has_restash(s.custom_fields)]
+    p_ids = [p.id for p in performers if _has_restash(p.custom_fields)]
+    log.progress(0.60)
+    n = (writer.clear_scores(stash, "scene", s_ids, settings)
+         + writer.clear_scores(stash, "performer", p_ids, settings))
+    log.info(f"Restash clear: removed restash_* from {n} entities "
+             f"({len(s_ids)} scenes, {len(p_ids)} performers). Other fields untouched.")
+    log.progress(1.0)
+    return 0
+
+
+def _has_restash(custom_fields: dict) -> bool:
+    return any(k in (custom_fields or {}) for k in writer.RESTASH_KEYS)
 
 
 def _watched_diagnostic(scenes, scene_scores, settings, top_n: int = 20):
