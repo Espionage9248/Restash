@@ -75,3 +75,37 @@ def test_n_events_counts_play_and_o_only():
                o_counter=1, play_duration=10.0, resume_time=1.0, file_duration=100.0)
     ev = alg.extract_events(s, Settings())
     assert alg.n_events(ev) == 2   # penalty not counted
+
+def test_freshness_curve_shape():
+    cfg = Settings()
+    assert alg.freshness(0, cfg) == -0.9          # just watched: buried
+    assert alg.freshness(1.9, cfg) == -0.9
+    assert math.isclose(alg.freshness(21, cfg), 0.0, abs_tol=1e-9)   # cooldown end
+    assert alg.freshness(11.5, cfg) < 0           # mid-cooldown still negative
+    assert alg.freshness(180, cfg) == 0.25        # full rediscovery
+    assert alg.freshness(5000, cfg) == 0.25       # capped
+    assert 0 < alg.freshness(100, cfg) < 0.25     # rediscovery ramp
+
+def test_freshness_is_monotonic_nondecreasing_after_2_days():
+    cfg = Settings()
+    xs = [alg.freshness(d, cfg) for d in range(2, 400)]
+    assert all(b >= a - 1e-12 for a, b in zip(xs, xs[1:]))
+
+def test_novelty_decays_by_half_every_30_days():
+    cfg = Settings()
+    assert math.isclose(alg.novelty(0, cfg), 0.3)
+    assert math.isclose(alg.novelty(30, cfg), 0.15)
+    assert math.isclose(alg.novelty(60, cfg), 0.075)
+
+def test_daily_jitter_is_deterministic_and_bounded():
+    a = alg.daily_jitter("scene-1", "2026-06-05", 0.06)
+    b = alg.daily_jitter("scene-1", "2026-06-05", 0.06)
+    c = alg.daily_jitter("scene-1", "2026-06-06", 0.06)
+    assert a == b              # same id+date → identical
+    assert a != c              # next day differs
+    assert -0.03 <= a <= 0.03  # ±amplitude/2
+
+def test_daily_jitter_differs_across_ids():
+    a = alg.daily_jitter("scene-1", "2026-06-05", 0.06)
+    b = alg.daily_jitter("scene-2", "2026-06-05", 0.06)
+    assert a != b

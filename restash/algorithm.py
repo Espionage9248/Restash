@@ -65,3 +65,28 @@ def decayed_event_sum(events: list[Event], now: datetime, half_life: float) -> f
 
 def n_events(events: list[Event]) -> int:
     return sum(1 for e in events if e.kind in ("play", "o"))
+
+
+def freshness(d_days: float, cfg: Settings) -> float:
+    """Cooldown→rediscovery curve, in [-0.9, +0.25]."""
+    if d_days < cfg.just_watched_days:
+        return -0.9
+    if d_days < cfg.cooldown_days:
+        return lerp(-0.9, 0.0,
+                    (d_days - cfg.just_watched_days) /
+                    (cfg.cooldown_days - cfg.just_watched_days))
+    if d_days < cfg.rediscovery_max_days:
+        return lerp(0.0, 0.25,
+                    (d_days - cfg.cooldown_days) /
+                    (cfg.rediscovery_max_days - cfg.cooldown_days))
+    return 0.25
+
+
+def novelty(library_age_days: float, cfg: Settings) -> float:
+    return cfg.novelty_strength * (0.5 ** (library_age_days / cfg.novelty_half_life_days))
+
+
+def daily_jitter(entity_id: str, date_seed: str, amplitude: float) -> float:
+    digest = hashlib.sha256(f"{entity_id}:{date_seed}".encode()).digest()
+    unit = int.from_bytes(digest[:8], "big") / 2 ** 64   # [0, 1)
+    return unit * amplitude - amplitude / 2.0
