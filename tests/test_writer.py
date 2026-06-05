@@ -46,3 +46,35 @@ def test_aliased_mutation_performer_type():
 def test_chunks_splits_evenly_and_remainder():
     assert list(writer._chunks([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
     assert list(writer._chunks([], 2)) == []
+
+from config import Settings
+
+class _FlakyStash:
+    def __init__(self, fail_times):
+        self.fail_times = fail_times
+        self.calls = 0
+    def call_GQL(self, query, variables=None):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise Exception("503 Service Unavailable")
+        return {"ok": True}
+
+def test_call_with_retry_succeeds_after_transient_failures(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(writer.time, "sleep", lambda s: sleeps.append(s))
+    stash = _FlakyStash(fail_times=2)
+    cfg = Settings()   # max_retries=3, backoff_base=0.5
+    assert writer._call_with_retry(stash, "q", {}, cfg) == {"ok": True}
+    assert stash.calls == 3   # 2 failures + 1 success
+    assert sleeps == [0.5, 1.0]   # backoff_base * 2^attempt before each retry
+
+def test_call_with_retry_raises_after_exhausting(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(writer.time, "sleep", lambda s: sleeps.append(s))
+    stash = _FlakyStash(fail_times=99)
+    cfg = Settings()
+    import pytest
+    with pytest.raises(Exception, match="503 Service Unavailable"):  # last failure preserved
+        writer._call_with_retry(stash, "q", {}, cfg)
+    assert stash.calls == cfg.write_max_retries + 1   # initial + retries
+    assert sleeps == [0.5, 1.0, 2.0]   # no sleep on the final (exhausting) attempt

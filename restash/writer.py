@@ -55,3 +55,18 @@ def aliased_update_mutation(entity: str, n: int) -> str:
 def _chunks(seq, size):
     for i in range(0, len(seq), size):
         yield seq[i:i + size]
+
+
+def _call_with_retry(stash, query: str, variables: dict, cfg):
+    """Call the GraphQL endpoint, retrying on ANY transport exception with
+    exponential backoff (stashapi raises generic Exceptions; we treat any failure
+    as retryable up to write_max_retries)."""
+    last_exc = None
+    for attempt in range(cfg.write_max_retries + 1):
+        try:
+            return stash.call_GQL(query, variables)
+        except Exception as exc:   # noqa: BLE001 — any transport failure is retryable
+            last_exc = exc
+            if attempt < cfg.write_max_retries:
+                time.sleep(cfg.write_backoff_base * (2 ** attempt))
+    raise last_exc
