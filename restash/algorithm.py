@@ -53,7 +53,10 @@ def extract_events(scene: models.SceneData, cfg: Settings) -> list[Event]:
         last_play = max(scene.play_history)
         resumed_early = scene.resume_time < 0.30 * scene.file_duration
         o_after = any(o > last_play for o in scene.o_history)
-        if resumed_early and not o_after:
+        # D11: also require LOW completion — resume_time resets to 0 on finished
+        # scenes, so resume_time alone falsely flags fully-watched ones.
+        low_completion = comp < cfg.abandonment_completion_max
+        if resumed_early and not o_after and low_completion:
             events.append(Event(last_play, cfg.abandonment_penalty, "penalty"))
     return events
 
@@ -423,16 +426,17 @@ def score_performers(performers: list[models.PerformerData],
             by_perf.setdefault(pid, []).append(s)
 
     pre: dict[str, dict] = {}
-    raw_values: list[float] = []
     ids: list[str] = []
     favorites: set[str] = set()
 
+    # Pass 1: per-performer terms. The "best material" term is kept RAW here; it is
+    # shrunk toward the population mean in pass 2 (D12) once that mean is known.
     for p in performers:
         their = by_perf.get(p.id, [])
-        # term: best material (mean top-5 restash_score / 100) → [0,1]
+        # term: best material (mean top-5 restash_score / 100) → [0,1], pre-shrinkage
         scene_vals = [scene_scores[s.id].restash_score for s in their
                       if s.id in scene_scores]
-        term_scenes = (_mean_top_n([float(v) for v in scene_vals], 5) / 100.0)
+        term_scenes_raw = (_mean_top_n([float(v) for v in scene_vals], 5) / 100.0)
         # term: taste affinity, remapped [-1,1] → [0,1]
         term_affinity = (aff["performers"].get(p.id, 0.0) + 1.0) / 2.0
         # term: freshness on performer's own last engagement → [0,1]
@@ -452,18 +456,35 @@ def score_performers(performers: list[models.PerformerData],
             perf_lib_age = age_days(p.created_at, now)
         term_novelty = clamp(novelty(perf_lib_age, cfg), 0.0, 1.0) * term_affinity
 
-        raw = (cfg.perf_w_scenes * term_scenes
-               + cfg.perf_w_affinity * term_affinity
-               + cfg.perf_w_fresh * term_fresh
-               + cfg.perf_w_supply * term_supply
-               + cfg.perf_w_novelty * term_novelty)
-        pre[p.id] = {"scenes": term_scenes, "affinity": term_affinity,
-                     "fresh": term_fresh, "fresh_d": d, "supply": term_supply,
-                     "novelty": term_novelty, "raw": raw}
-        raw_values.append(raw)
+        pre[p.id] = {"scenes_raw": term_scenes_raw, "n_scene_vals": len(scene_vals),
+                     "affinity": term_affinity, "fresh": term_fresh, "fresh_d": d,
+                     "supply": term_supply, "novelty": term_novelty}
         ids.append(p.id)
         if p.favorite:
             favorites.add(p.id)
+
+    # D12: population prior = mean raw "best material" term; shrink each performer's
+    # term toward it in proportion to how few scored scenes back it up.
+    scene_terms = [pre[pid]["scenes_raw"] for pid in ids]
+    prior = statistics.fmean(scene_terms) if scene_terms else 0.0
+    k = cfg.perf_scenes_shrinkage_k
+
+    # Pass 2: shrink the best-material term, then assemble the weighted raw score.
+    raw_values: list[float] = []
+    for pid in ids:
+        c = pre[pid]
+        n = c["n_scene_vals"]
+        term_scenes = ((n * c["scenes_raw"] + k * prior) / (n + k)
+                       if (n + k) > 0 else prior)
+        raw = (cfg.perf_w_scenes * term_scenes
+               + cfg.perf_w_affinity * c["affinity"]
+               + cfg.perf_w_fresh * c["fresh"]
+               + cfg.perf_w_supply * c["supply"]
+               + cfg.perf_w_novelty * c["novelty"])
+        c["scenes"] = term_scenes            # final (shrunk) value, shown in the report
+        c["scenes_prior"] = prior
+        c["raw"] = raw
+        raw_values.append(raw)
 
     pcts = percentiles(raw_values)
     out: dict[str, models.PerformerScore] = {}

@@ -332,3 +332,68 @@ def test_next_day_differs_only_by_jitter_drift():
     assert set(today) == set(tomorrow)
     moved = sum(today[k].restash_score != tomorrow[k].restash_score for k in today)
     assert moved >= 1
+
+
+def test_no_abandonment_penalty_when_completion_high():
+    # D11: fully-watched scene with resume_time reset to 0 must NOT be penalized.
+    s = _scene(play_history=[days_ago(1)], play_count=1, play_duration=95.0,
+               resume_time=0.0, file_duration=100.0)  # completion 0.95, resume 0, no o
+    ev = alg.extract_events(s, Settings())
+    assert not any(e.kind == "penalty" for e in ev)
+
+def test_abandonment_penalty_still_fires_on_low_completion():
+    # genuinely sampled-and-bailed: low completion + early resume + no o → penalized.
+    s = _scene(play_history=[days_ago(1)], play_count=1, play_duration=10.0,
+               resume_time=5.0, file_duration=100.0)  # completion 0.10
+    ev = alg.extract_events(s, Settings())
+    assert any(e.kind == "penalty" and e.value == -0.5 for e in ev)
+
+def test_abandonment_completion_gate_is_tunable():
+    # raising the gate above the scene's completion re-enables the penalty.
+    cfg = Settings(abandonment_completion_max=0.99)
+    s = _scene(play_history=[days_ago(1)], play_count=1, play_duration=95.0,
+               resume_time=0.0, file_duration=100.0)  # completion 0.95 < 0.99
+    ev = alg.extract_events(s, cfg)
+    assert any(e.kind == "penalty" for e in ev)
+
+
+def test_performer_best_material_shrinks_toward_prior_by_evidence():
+    # D12: two performers both have only top-scoring scenes (raw term 1.0); a third
+    # 'low' performer drags the population prior below 1.0 so shrinkage is visible.
+    cfg = Settings()
+    solo_scene = _scene(id="ss", performer_ids=["solo"])
+    pro_scenes = [_scene(id=f"ps{i}", performer_ids=["prolific"]) for i in range(5)]
+    low_scene = _scene(id="ls", performer_ids=["low"])
+    scenes = [solo_scene, *pro_scenes, low_scene]
+
+    def _ss(sid, score):
+        return models.SceneScore(id=sid, raw=0.0, restash_score=score,
+                                 percentile=score / 100, n_events=0, wildcard=False,
+                                 components={})
+    scene_scores = {"ss": _ss("ss", 100), "ls": _ss("ls", 10)}
+    for i in range(5):
+        scene_scores[f"ps{i}"] = _ss(f"ps{i}", 100)
+    aff = {"performers": {}, "tags": {}, "studios": {}}
+    performers = [_perf(id="solo"), _perf(id="prolific"), _perf(id="low")]
+    ps = alg.score_performers(performers, scenes, scene_scores, aff, cfg, NOW)
+
+    solo_term = ps["solo"].components["scenes"]
+    pro_term = ps["prolific"].components["scenes"]
+    assert pro_term > solo_term        # more scenes → less shrinkage → higher term
+    assert solo_term < 1.0             # single-scene performer pulled below the ceiling
+    assert ps["prolific"].restash_score >= ps["solo"].restash_score
+
+def test_performer_shrinkage_k_zero_is_noop():
+    # k=0 → no shrinkage → single strong scene keeps the full term.
+    cfg = Settings(perf_scenes_shrinkage_k=0.0)
+    scenes = [_scene(id="x", performer_ids=["solo"]),
+              _scene(id="y", performer_ids=["low"])]
+    scene_scores = {
+        "x": models.SceneScore(id="x", raw=0.0, restash_score=100, percentile=1.0,
+                               n_events=0, wildcard=False, components={}),
+        "y": models.SceneScore(id="y", raw=0.0, restash_score=10, percentile=0.1,
+                               n_events=0, wildcard=False, components={})}
+    aff = {"performers": {}, "tags": {}, "studios": {}}
+    ps = alg.score_performers([_perf(id="solo"), _perf(id="low")], scenes,
+                              scene_scores, aff, cfg, NOW)
+    assert ps["solo"].components["scenes"] == 1.0   # unshrunk

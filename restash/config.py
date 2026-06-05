@@ -55,6 +55,15 @@ class Settings:
     perf_w_fresh: float = 0.15
     perf_w_supply: float = 0.15
     perf_w_novelty: float = 0.10
+    # D11 (dry-run finding 2026-06-05): only treat a scene as "abandoned" when
+    # completion is ALSO low. Stash resets resume_time to 0 on a finished scene,
+    # so resume_time alone falsely penalized fully-watched scenes.
+    abandonment_completion_max: float = 0.5
+    # D12 (dry-run finding 2026-06-05): Bayesian-shrink the performer "best material"
+    # term toward the population mean by evidence count (number of their scored
+    # scenes), so a performer with a single strong scene (e.g. a whole ensemble cast
+    # of one film) can't sit at the ceiling. Higher k = stronger pull toward the mean.
+    perf_scenes_shrinkage_k: float = 3.0
 
     @classmethod
     def from_plugin_settings(cls, plugin_cfg: dict | None) -> "Settings":
