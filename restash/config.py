@@ -71,6 +71,11 @@ class Settings:
     # rediscovery bonus, so old favourites genuinely climb back. Both tunable.
     direct_half_life_days: float = 365.0
     rediscovery_bonus: float = 0.40
+    # --- write-layer / operational settings (Phase 5) ---
+    write_chunk_size: int = 100        # aliased mutations per GraphQL request
+    write_max_retries: int = 3         # retries on a failed mutation request
+    write_backoff_base: float = 0.5    # seconds; exponential backoff base
+    write_limit: int = 0               # 0 = no limit; >0 caps entities written (subset-first)
 
     @classmethod
     def from_plugin_settings(cls, plugin_cfg: dict | None) -> "Settings":

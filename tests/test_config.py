@@ -21,3 +21,10 @@ def test_from_plugin_settings_overrides_defaults():
 def test_from_plugin_settings_ignores_unknown_keys():
     s = config.Settings.from_plugin_settings({"somethingElse": 7})
     assert s == config.Settings()
+
+def test_write_settings_defaults():
+    s = config.Settings()
+    assert s.write_chunk_size == 100
+    assert s.write_max_retries == 3
+    assert s.write_backoff_base == 0.5
+    assert s.write_limit == 0   # 0 = write all; >0 caps (subset-first gate)
