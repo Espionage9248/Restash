@@ -409,3 +409,78 @@ def _apply_wildcards(scores: dict[str, models.SceneScore], cfg: Settings,
         s.restash_score = int(round(lo_b + spread * (hi_b - lo_b)))
         s.wildcard = True
         s.components["wildcard"] = 1.0
+
+
+def score_performers(performers: list[models.PerformerData],
+                     scenes: list[models.SceneData],
+                     scene_scores: dict[str, models.SceneScore],
+                     aff: dict[str, dict], cfg: Settings,
+                     now: datetime) -> dict[str, models.PerformerScore]:
+    # index scenes by performer
+    by_perf: dict[str, list[models.SceneData]] = {}
+    for s in scenes:
+        for pid in s.performer_ids:
+            by_perf.setdefault(pid, []).append(s)
+
+    pre: dict[str, dict] = {}
+    raw_values: list[float] = []
+    ids: list[str] = []
+    favorites: set[str] = set()
+
+    for p in performers:
+        their = by_perf.get(p.id, [])
+        # term: best material (mean top-5 restash_score / 100) → [0,1]
+        scene_vals = [scene_scores[s.id].restash_score for s in their
+                      if s.id in scene_scores]
+        term_scenes = (_mean_top_n([float(v) for v in scene_vals], 5) / 100.0)
+        # term: taste affinity, remapped [-1,1] → [0,1]
+        term_affinity = (aff["performers"].get(p.id, 0.0) + 1.0) / 2.0
+        # term: freshness on performer's own last engagement → [0,1]
+        last = _perf_last_engagement(their)
+        d = age_days(last, now) if last else cfg.rediscovery_max_days
+        term_fresh = (freshness(d, cfg) + 0.9) / 1.15
+        # term: unwatched supply × affinity → [0,1]
+        if their:
+            unwatched = sum(1 for s in their if s.play_count == 0) / len(their)
+        else:
+            unwatched = 0.0
+        term_supply = unwatched * term_affinity
+        # term: novelty (recent first created_at among their scenes) × affinity
+        if their:
+            perf_lib_age = age_days(min(s.created_at for s in their), now)
+        else:
+            perf_lib_age = age_days(p.created_at, now)
+        term_novelty = clamp(novelty(perf_lib_age, cfg), 0.0, 1.0) * term_affinity
+
+        raw = (cfg.perf_w_scenes * term_scenes
+               + cfg.perf_w_affinity * term_affinity
+               + cfg.perf_w_fresh * term_fresh
+               + cfg.perf_w_supply * term_supply
+               + cfg.perf_w_novelty * term_novelty)
+        pre[p.id] = {"scenes": term_scenes, "affinity": term_affinity,
+                     "fresh": term_fresh, "fresh_d": d, "supply": term_supply,
+                     "novelty": term_novelty, "raw": raw}
+        raw_values.append(raw)
+        ids.append(p.id)
+        if p.favorite:
+            favorites.add(p.id)
+
+    pcts = percentiles(raw_values)
+    out: dict[str, models.PerformerScore] = {}
+    for idx, pid in enumerate(ids):
+        pct = pcts[idx]
+        if pid in favorites:
+            pct = max(pct, cfg.favorite_percentile_floor)
+        out[pid] = models.PerformerScore(
+            id=pid, raw=pre[pid]["raw"], restash_score=to_restash_score(pct),
+            percentile=pct, components=pre[pid])
+    return out
+
+
+def _perf_last_engagement(scenes: list[models.SceneData]) -> datetime | None:
+    times = []
+    for s in scenes:
+        le = _last_engagement(s)
+        if le:
+            times.append(le)
+    return max(times) if times else None

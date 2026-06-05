@@ -273,3 +273,33 @@ def test_last_engagement_uses_last_played_at_when_newer_than_play_history():
                               cfg, NOW, "2026-06-05")
     # fresh_d should reflect the 1-day anchor (just-watched), not 40 days.
     assert scores["lp"].components["fresh_d"] == pytest.approx(1.0, abs=0.01)
+
+
+def _perf(**kw):
+    base = dict(id="p", name="N", favorite=False, rating100=None, o_counter=0,
+                scene_count=0, tag_ids=[], created_at=days_ago(400), custom_fields={})
+    base.update(kw)
+    return models.PerformerData(**base)
+
+def test_score_performers_ranks_and_uses_best_scenes():
+    cfg = Settings()
+    scenes = [
+        _scene(id="s1", o_history=[days_ago(2)] * 3, o_counter=3, performer_ids=["good"]),
+        _scene(id="s2", performer_ids=["meh"], created_at=days_ago(900)),
+    ]
+    scene_scores = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    aff = alg.build_affinities(scenes, NOW, cfg, set(), {})
+    performers = [_perf(id="good", scene_count=1), _perf(id="meh", scene_count=1)]
+    ps = alg.score_performers(performers, scenes, scene_scores, aff, cfg, NOW)
+    assert ps["good"].restash_score >= ps["meh"].restash_score
+    assert all(1 <= p.restash_score <= 100 for p in ps.values())
+
+def test_favorite_floor_at_60th_percentile():
+    cfg = Settings()
+    scenes = [_scene(id=f"s{i}", performer_ids=[f"p{i}"]) for i in range(10)]
+    ss = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    aff = alg.build_affinities(scenes, NOW, cfg, set(), {})
+    performers = [_perf(id=f"p{i}", scene_count=1) for i in range(10)]
+    performers[0].favorite = True   # p0 would otherwise rank low/mid
+    ps = alg.score_performers(performers, scenes, ss, aff, cfg, NOW)
+    assert ps["p0"].restash_score >= 60
