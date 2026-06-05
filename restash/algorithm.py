@@ -90,3 +90,30 @@ def daily_jitter(entity_id: str, date_seed: str, amplitude: float) -> float:
     digest = hashlib.sha256(f"{entity_id}:{date_seed}".encode()).digest()
     unit = int.from_bytes(digest[:8], "big") / 2 ** 64   # [0, 1)
     return unit * amplitude - amplitude / 2.0
+
+
+def percentiles(values: list[float]) -> list[float]:
+    """Average-rank percentile in [0,1]; tied values share their mean rank (D3)."""
+    n = len(values)
+    if n == 0:
+        return []
+    if n == 1:
+        return [1.0]
+    # round to absorb float noise so genuine ties group together
+    keyed = [(round(v, 9), i) for i, v in enumerate(values)]
+    order = sorted(range(n), key=lambda i: keyed[i][0])
+    ranks = [0.0] * n
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and keyed[order[j + 1]][0] == keyed[order[i]][0]:
+            j += 1
+        avg_rank = (i + j) / 2.0
+        for k in range(i, j + 1):
+            ranks[order[k]] = avg_rank
+        i = j + 1
+    return [r / (n - 1) for r in ranks]
+
+
+def to_restash_score(percentile: float) -> int:
+    return max(1, round(100 * percentile))

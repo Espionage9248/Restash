@@ -109,3 +109,22 @@ def test_daily_jitter_differs_across_ids():
     a = alg.daily_jitter("scene-1", "2026-06-05", 0.06)
     b = alg.daily_jitter("scene-2", "2026-06-05", 0.06)
     assert a != b
+
+def test_percentiles_spread_min_to_max():
+    pcts = alg.percentiles([10.0, 20.0, 30.0])
+    assert pcts == [0.0, 0.5, 1.0]
+
+def test_percentiles_average_rank_for_ties():
+    # two tied at the top share the average of ranks 1 and 2 (0-based)
+    pcts = alg.percentiles([5.0, 9.0, 9.0])
+    assert pcts[0] == 0.0
+    assert pcts[1] == pcts[2] == ((1 + 2) / 2) / 2  # avg 0-based rank 1.5 / (n-1=2)
+
+def test_percentiles_single_and_empty():
+    assert alg.percentiles([]) == []
+    assert alg.percentiles([42.0]) == [1.0]
+
+def test_to_restash_score_floor_and_round():
+    assert alg.to_restash_score(0.0) == 1     # floored at 1
+    assert alg.to_restash_score(1.0) == 100
+    assert alg.to_restash_score(0.874) == 87
