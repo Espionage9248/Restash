@@ -17,14 +17,14 @@ settings:
   dryRun:               { displayName: Dry run (log only), type: BOOLEAN }
 tasks:
   - name: Dry Run Report
-    description: Full compute, writes nothing, logs top-30 scenes/performers with score breakdowns
+    description: Full compute, writes nothing, logs top-30 scenes/performers with score breakdowns. Run this first.
     defaultArgs: { mode: dry }
   - name: Recompute All
-    description: (Not implemented in this build) Full taste-model rebuild and score write
+    description: Read everything, rebuild the taste model, and write freshness scores to scenes + performers (custom_fields). Skips unchanged.
     defaultArgs: { mode: full }
   - name: Quick Refresh
-    description: (Not implemented in this build) Re-apply freshness/jitter using cached taste model
+    description: (Not yet implemented — planned for a future release) Fast re-score from a cached taste model
     defaultArgs: { mode: refresh }
   - name: Clear Restash Data
-    description: (Not implemented in this build) Remove all Restash custom fields
+    description: Remove all Restash custom fields (restash_*) from scenes + performers. Other fields and ratings are left untouched.
     defaultArgs: { mode: clear }
