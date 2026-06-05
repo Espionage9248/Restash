@@ -320,3 +320,92 @@ def scene_base(scene: models.SceneData, aff: dict[str, dict],
     return {"perf": perf_term, "tag": tag_term, "studio": studio_term,
             "quality": quality_term, "ingredients": ingredients, "direct": direct,
             "confidence": confidence, "base": base, "n_events": ne}
+
+
+def score_scenes(scenes: list[models.SceneData], cfg: Settings, now: datetime,
+                 date_seed: str, favorites: set[str] | None = None,
+                 ratings: dict[str, int] | None = None,
+                 aff: dict[str, dict] | None = None) -> dict[str, models.SceneScore]:
+    favorites = favorites or set()
+    ratings = ratings or {}
+    if aff is None:
+        aff = build_affinities(scenes, now, cfg, favorites, ratings)
+    tag_counts: dict[str, int] = {}
+    for s in scenes:
+        for t in s.tag_ids:
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+    dur_median, dur_scale = duration_sweet_spot(scenes)
+
+    pre: dict[str, dict] = {}
+    raw_values: list[float] = []
+    ids: list[str] = []
+    for s in scenes:
+        comp = scene_base(s, aff, tag_counts, dur_median, dur_scale, cfg, now)
+        ne = comp["n_events"]
+        if ne == 0:
+            lib_age = age_days(s.created_at, now)
+            nov = novelty(lib_age, cfg)
+            final = comp["base"] + nov
+            comp["fresh"] = 0.0
+            comp["fresh_d"] = None
+            comp["novelty"] = nov
+        else:
+            last = _last_engagement(s)
+            d = age_days(last, now) if last else cfg.rediscovery_max_days
+            f = freshness(d, cfg)
+            final = comp["base"] + f * abs(comp["base"]) * cfg.fresh_weight
+            comp["fresh"] = f
+            comp["fresh_d"] = d
+            comp["novelty"] = 0.0
+        jit = daily_jitter(s.id, date_seed, cfg.jitter_amplitude)
+        comp["jitter"] = jit
+        final += jit
+        comp["raw"] = final
+        pre[s.id] = comp
+        raw_values.append(final)
+        ids.append(s.id)
+
+    pcts = percentiles(raw_values)
+    scores: dict[str, models.SceneScore] = {}
+    for idx, sid in enumerate(ids):
+        comp = pre[sid]
+        scores[sid] = models.SceneScore(
+            id=sid, raw=comp["raw"], restash_score=to_restash_score(pcts[idx]),
+            percentile=pcts[idx], n_events=comp["n_events"], wildcard=False,
+            components=comp)
+    _apply_wildcards(scores, cfg, date_seed)
+    return scores
+
+
+def _last_engagement(scene: models.SceneData) -> datetime | None:
+    candidates = []
+    if scene.play_history:
+        candidates.append(max(scene.play_history))
+    elif scene.last_played_at:
+        candidates.append(scene.last_played_at)
+    if scene.o_history:
+        candidates.append(max(scene.o_history))
+    return max(candidates) if candidates else None
+
+
+def _apply_wildcards(scores: dict[str, models.SceneScore], cfg: Settings,
+                     date_seed: str) -> None:
+    """D4: date-seeded override of a few low-confidence mid-pack scenes into 85–95.
+    Only the chosen scenes change; everyone else keeps their percentile rank."""
+    lo_b, hi_b = cfg.wildcard_band_low, cfg.wildcard_band_high
+    lo_p, hi_p = cfg.wildcard_pool_low, cfg.wildcard_pool_high
+    pool = [s for s in scores.values()
+            if lo_p <= s.percentile <= hi_p
+            and s.n_events <= cfg.wildcard_low_conf_max_events]
+    if not pool:
+        return
+    target = int(len(scores) * cfg.wildcard_percent / 100.0)
+    target = min(target, len(pool))
+    if target <= 0:
+        return
+    pool.sort(key=lambda s: daily_jitter(s.id, date_seed + ":wild", 1.0))
+    for s in pool[:target]:
+        spread = (daily_jitter(s.id, date_seed + ":band", 1.0) + 0.5)  # [0,1)
+        s.restash_score = int(round(lo_b + spread * (hi_b - lo_b)))
+        s.wildcard = True
+        s.components["wildcard"] = 1.0

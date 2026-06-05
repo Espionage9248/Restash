@@ -217,3 +217,47 @@ def test_scene_base_uses_ingredients_when_no_history():
     comp = alg.scene_base(cold, aff, {}, None, None, cfg, NOW)
     assert comp["confidence"] == 0.0
     assert math.isclose(comp["base"], comp["ingredients"])
+
+def test_score_scenes_emits_one_score_each_and_ranks_1_to_100():
+    cfg = Settings()
+    scenes = [
+        _scene(id="hot", o_history=[days_ago(2)] * 4, o_counter=4, performer_ids=["p1"]),
+        _scene(id="cold", performer_ids=["p2"], created_at=days_ago(1000)),
+        _scene(id="mid", play_history=[days_ago(40)], play_count=1,
+               play_duration=80.0, performer_ids=["p1"]),
+    ]
+    scores = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    assert set(scores) == {"hot", "cold", "mid"}
+    assert all(1 <= s.restash_score <= 100 for s in scores.values())
+    assert max(s.restash_score for s in scores.values()) == 100
+
+def test_just_watched_scene_is_buried():
+    cfg = Settings()
+    scenes = [
+        _scene(id="just", o_history=[days_ago(0)], o_counter=1, performer_ids=["p1"]),
+        _scene(id="old", o_history=[days_ago(200)], o_counter=1, performer_ids=["p1"]),
+    ]
+    scores = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    assert scores["just"].restash_score < scores["old"].restash_score
+
+def test_score_scenes_is_deterministic_same_day():
+    cfg = Settings()
+    scenes = [_scene(id=f"s{i}", play_history=[days_ago(i + 3)], play_count=1,
+                     play_duration=50.0, performer_ids=["p1"]) for i in range(10)]
+    a = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    b = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    assert {k: v.restash_score for k, v in a.items()} == \
+           {k: v.restash_score for k, v in b.items()}
+
+def test_wildcards_promote_low_confidence_midpack():
+    cfg = Settings()
+    # 100 no-history scenes spread across the percentile range by created_at
+    scenes = [_scene(id=f"w{i}", created_at=days_ago(i * 5 + 1)) for i in range(100)]
+    scores = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    wild = [s for s in scores.values() if s.wildcard]
+    assert len(wild) == int(100 * cfg.wildcard_percent / 100)   # 2
+    assert all(85 <= s.restash_score <= 95 for s in wild)
+    # deterministic: same day → same wildcard set
+    again = alg.score_scenes(scenes, cfg, NOW, "2026-06-05")
+    assert {s.id for s in scores.values() if s.wildcard} == \
+           {s.id for s in again.values() if s.wildcard}
