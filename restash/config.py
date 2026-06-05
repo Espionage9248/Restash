@@ -76,6 +76,7 @@ class Settings:
     write_max_retries: int = 3         # retries on a failed mutation request
     write_backoff_base: float = 0.5    # seconds; exponential backoff base
     write_limit: int = 0               # 0 = no limit; >0 caps entities written (subset-first)
+    write_only_scene_ids: tuple[str, ...] = ()   # targeted verification: if set, full mode writes ONLY these scene ids (no performers, no D8 clear)
 
     @classmethod
     def from_plugin_settings(cls, plugin_cfg: dict | None) -> "Settings":

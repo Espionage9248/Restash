@@ -28,3 +28,6 @@ def test_write_settings_defaults():
     assert s.write_max_retries == 3
     assert s.write_backoff_base == 0.5
     assert s.write_limit == 0   # 0 = write all; >0 caps (subset-first gate)
+
+def test_write_only_scene_ids_default_empty():
+    assert config.Settings().write_only_scene_ids == ()

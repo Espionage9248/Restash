@@ -18,6 +18,8 @@ def parse_input(payload: dict):
     settings = config.Settings.from_plugin_settings(plugin_cfg)
     if "write_limit" in args:
         settings.write_limit = int(args["write_limit"])
+    if "scene_ids" in args:
+        settings.write_only_scene_ids = tuple(str(i) for i in args["scene_ids"])
     return mode, conn, settings
 
 
@@ -111,6 +113,14 @@ def _run_full(stash, settings: config.Settings) -> int:
                                                   scene_scores, aff, settings, now)
     log.progress(0.70)
 
+    targeted = bool(settings.write_only_scene_ids)
+    if targeted:
+        target = set(settings.write_only_scene_ids)
+        scene_scores = {sid: sc for sid, sc in scene_scores.items() if sid in target}
+        performer_scores = {}
+        log.info(f"Restash: targeted write — {len(scene_scores)} of {len(target)} "
+                 f"requested scene id(s) in corpus; performers skipped.")
+
     existing_scene_cf = {s.id: s.custom_fields for s in kept_scenes}
     existing_perf_cf = {p.id: p.custom_fields for p in kept_performers}
     s_stats = writer.write_scores(stash, "scene", scene_scores, existing_scene_cf,
@@ -120,17 +130,21 @@ def _run_full(stash, settings: config.Settings) -> int:
     log.progress(0.90)
 
     # D8: drop restash_* from entities now excluded but previously scored.
-    drop_scene_ids = [s.id for s in scenes
-                      if s.id not in kept_scene_ids and _has_restash(s.custom_fields)]
-    drop_perf_ids = [p.id for p in performers
-                     if p.id not in kept_perf_ids and _has_restash(p.custom_fields)]
+    # (Skipped entirely in targeted write mode — we touch only the named scenes.)
+    if targeted:
+        drop_scene_ids, drop_perf_ids = [], []
+    else:
+        drop_scene_ids = [s.id for s in scenes
+                          if s.id not in kept_scene_ids and _has_restash(s.custom_fields)]
+        drop_perf_ids = [p.id for p in performers
+                         if p.id not in kept_perf_ids and _has_restash(p.custom_fields)]
     cleared = (writer.clear_scores(stash, "scene", drop_scene_ids, settings)
                + writer.clear_scores(stash, "performer", drop_perf_ids, settings))
 
     log.info(f"Restash full: scenes written={s_stats['written']} "
              f"skipped={s_stats['skipped']}; performers written={p_stats['written']} "
              f"skipped={p_stats['skipped']}; excluded cleared={cleared}.")
-    if settings.write_limit:
+    if settings.write_limit and not targeted:
         log.info(f"Restash: write_limit={settings.write_limit} active — capped writes "
                  f"(scenes would_write={s_stats['would_write']}, "
                  f"performers would_write={p_stats['would_write']}).")
