@@ -9,10 +9,10 @@ I want to see right now?"* and changes over time.
 The score is written **only** into each entity's `custom_fields` (keys prefixed
 `restash_`). The native `rating100` star rating is **never touched**.
 
-> **Status:** 0.1.0. The scoring engine and the write path (`Recompute All`,
-> `Clear Restash Data`) are complete and have been validated end-to-end against a real
-> ~4,500-scene library. `Quick Refresh` (a fast daily re-score) is planned for a future
-> release; the optional `rating100` mirror is a separate future feature.
+> **Status:** 0.2.0. The scoring engine, the write path (`Recompute All`,
+> `Clear Restash Data`), and `Quick Refresh` (a fast daily re-score from a cached taste
+> model) are complete and validated end-to-end against a real ~5,900-scene library. The
+> optional `rating100` mirror remains a separate future feature.
 
 ---
 
@@ -103,11 +103,20 @@ Report**, eyeball the breakdown, then **Recompute All**.
 | **Dry Run Report** | `dry` | Reads + scores everything, **writes nothing**, logs the top-30 scenes and performers with every term itemised. Safe to run anytime. |
 | **Recompute All** | `full` | Reads, rebuilds the taste model, scores, and **writes** `restash_*` to scenes + performers. Skips entities whose score is unchanged. |
 | **Clear Restash Data** | `clear` | Removes the `restash_*` keys from every entity. Other custom fields and `rating100` are left untouched. |
-| **Quick Refresh** | `refresh` | *Planned for a future release* — currently a no-op that logs and exits. |
+| **Quick Refresh** | `refresh` | Fast daily re-score from the cached taste model (written by `Recompute All`): re-applies freshness, novelty, jitter, and wildcards **without** rebuilding affinities or reading watch histories. Self-heals to a full recompute if the cache is missing or stale. See [Scheduling](#scheduling). |
 
 **Non-destructive by design:** writes use the **partial** form of `CustomFieldsInput`
 (merge), so your own custom fields survive; `Clear` uses the **remove** form. The plugin
 **never writes `rating100`**, and it registers no update hooks (so it can't trigger itself).
+
+### The taste-model cache
+
+`Recompute All` writes a `restash_state.json` file next to the plugin (in the `restash/`
+folder) holding the affinity model and each scene's pre-freshness base. **Quick Refresh**
+reads it to skip the expensive affinity rebuild and history read. It's a pure speed cache:
+the authoritative scores live in `custom_fields`, and the file is fully regenerable — delete
+it (or change a scoring setting) and the next Quick Refresh self-heals by running a full
+recompute. It's local-only and never committed to git.
 
 ### Reading the scores
 
@@ -134,8 +143,9 @@ Stash has **no built-in scheduler for plugin tasks**, so run **Quick Refresh** o
 schedule from outside Stash. Quick Refresh is the cheap daily job: it re-applies
 freshness, novelty, jitter, and wildcards from the cached taste model (written by
 **Recompute All**) without rebuilding affinities. If the cache is missing or stale it
-self-heals by running a full recompute. Expect a daily refresh to skip ~99% of entities
-as unchanged — that is normal and correct.
+self-heals by running a full recompute. Expect a daily refresh to skip most scenes as
+unchanged (performers churn a bit more — see the determinism note below); that is normal
+and correct.
 
 Trigger it via the GraphQL `runPluginTask` mutation. A ready-to-use helper lives in
 [`scripts/restash-refresh.sh`](scripts/restash-refresh.sh):
@@ -188,7 +198,7 @@ Exposed under **Settings → Plugins → Restash**. Defaults match the spec.
 Operational knobs (batch size, retry/backoff, the subset-first write cap) are tuned for
 safe defaults and set programmatically rather than through the UI.
 
-> **rating100 mirror:** Restash never writes the native `rating100` rating in 0.1.0. An
+> **rating100 mirror:** Restash never writes the native `rating100` rating. An
 > optional mirror (also write the score to `rating100`, for native UI sorting) is planned
 > as a separate future release and will add its own setting when it lands. A "dry run" is
 > simply the **Dry Run Report** task — there's no separate toggle.
@@ -232,9 +242,11 @@ The maths stays exactly as implemented; this is just the narration.
   have, so a one-scene ensemble cast can't all sit at the ceiling.)*
 
 A determinism note worth knowing: the date-seeded parts (jitter, wildcards) are identical
-all day, but the freshness/novelty terms move with the real clock. So an immediate
-re-`Recompute All` rewrites only the handful of entities whose **integer** percentile
-actually shifted — in practice ~99% are skipped, which keeps repeat runs cheap.
+all day, but the freshness/novelty terms move with the real clock. So an immediate re-run
+rewrites only the entities whose **integer** percentile actually shifted — most scenes are
+skipped, though performers churn more: their scores ride a global percentile re-rank, so a
+microscopic shift flips many across rounding boundaries. **Quick Refresh** behaves the same
+way and shares the same skip-unchanged write path, so a scheduled daily run stays cheap.
 
 ---
 
@@ -245,7 +257,7 @@ The repo root is a small Python project; the installable plugin is the `restash/
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install stashapp-tools pytest
-pytest                      # 100+ offline unit tests, no Stash needed
+pytest                      # 120+ offline unit tests, no Stash needed
 ```
 
 `restash/tools/run_local.py` runs a task locally by feeding `restash.py` the same stdin
@@ -272,7 +284,7 @@ tag, so it must be bumped in the same commit as any release tag. `scripts/check_
 <tag>` enforces this (exit 1 on mismatch), and CI runs it automatically on tag pushes:
 
 ```bash
-python scripts/check_version.py v0.1.0   # OK when restash.yml says 0.1.0
+python scripts/check_version.py v0.2.0   # OK when restash.yml says 0.2.0
 ```
 
 ---
