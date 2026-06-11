@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import pathlib
 import sys
 
 import algorithm
@@ -74,13 +75,25 @@ def _run_dry(stash, settings: config.Settings) -> int:
 
     titles = {s.id: s.title for s in scenes}
     names = {p.id: p.name for p in performers}
-    print(report.format_scene_report(scene_scores, titles, top_n=30))
-    print(report.format_performer_report(performer_scores, names, top_n=30))
     diag_rows, diag_summary = _watched_diagnostic(scenes, scene_scores, settings)
-    print(report.format_watched_diagnostic(diag_rows, diag_summary, top_n=20))
-    print(report.format_summary(len(scene_scores), len(performer_scores),
-                                would_write=len(scene_scores) + len(performer_scores),
-                                skipped=0))
+    summary = report.format_summary(len(scene_scores), len(performer_scores),
+                                    would_write=len(scene_scores) + len(performer_scores),
+                                    skipped=0)
+
+    report_path = pathlib.Path(__file__).parent / "restash_dry_run.txt"
+    report_path.write_text(
+        "\n\n".join([
+            report.format_scene_report(scene_scores, titles, top_n=30),
+            report.format_performer_report(performer_scores, names, top_n=30),
+            report.format_watched_diagnostic(diag_rows, diag_summary, top_n=20),
+            summary,
+        ]),
+        encoding="utf-8",
+    )
+
+    for line in summary.splitlines():
+        log.info(line)
+    log.info(f"Restash: full report saved → {report_path}")
     log.progress(1.0)
     return 0
 
