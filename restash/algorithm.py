@@ -365,6 +365,45 @@ def finalize_from_base(scene_id: str, base: float, n_events: int,
     return final, extra
 
 
+def refresh_scene_scores(cached_scenes: dict, current_light: dict, cfg: Settings,
+                         now: datetime, date_seed: str) -> dict[str, models.SceneScore]:
+    """Replay the wall-clock tail from cached per-scene `base`. Scores only ids
+    present in BOTH the cache and the current (lightweight) library read.
+
+    cached_scenes: {id: {base, n_events, created_at(dt), last_engagement(dt|None),
+                         perf_ids}}
+    current_light: {id: {last_played_at(dt|None), play_count, o_counter, custom_fields}}
+    """
+    pre: dict[str, dict] = {}
+    raw_values: list[float] = []
+    ids: list[str] = []
+    for sid, c in cached_scenes.items():
+        cur = current_light.get(sid)
+        if cur is None:
+            continue   # dropped from the library since the full run
+        last_eng = _max_dt(c.get("last_engagement"), cur.get("last_played_at"))
+        watched_since = (cur.get("play_count", 0) > 0 or cur.get("o_counter", 0) > 0)
+        final, extra = finalize_from_base(
+            sid, c["base"], c["n_events"], last_eng, c["created_at"],
+            now, date_seed, cfg, watched_since=watched_since)
+        comp = {"base": c["base"], "n_events": c["n_events"]}
+        comp.update(extra)
+        pre[sid] = comp
+        raw_values.append(final)
+        ids.append(sid)
+
+    pcts = percentiles(raw_values)
+    scores: dict[str, models.SceneScore] = {}
+    for idx, sid in enumerate(ids):
+        comp = pre[sid]
+        scores[sid] = models.SceneScore(
+            id=sid, raw=comp["raw"], restash_score=to_restash_score(pcts[idx]),
+            percentile=pcts[idx], n_events=comp["n_events"], wildcard=False,
+            components=comp)
+    _apply_wildcards(scores, cfg, date_seed)
+    return scores
+
+
 def score_scenes(scenes: list[models.SceneData], cfg: Settings, now: datetime,
                  date_seed: str, favorites: set[str] | None = None,
                  ratings: dict[str, int] | None = None,

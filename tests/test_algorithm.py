@@ -472,3 +472,86 @@ def test_finalize_watched_since_overrides_zero_events():
         "s1", base=0.5, n_events=0, last_engagement=last, created_at=last,
         now=now, date_seed="2026-06-08", cfg=Settings(), watched_since=True)
     assert extra["fresh"] == -0.9 and extra["novelty"] == 0.0
+
+
+def _mk_scene(**kw):
+    import models
+    from datetime import datetime, timezone
+    base = dict(id="1", title="", play_history=[], o_history=[], play_count=0,
+                o_counter=0, play_duration=0.0, resume_time=None,
+                last_played_at=None, file_duration=1000.0, height=1080,
+                marker_count=0, organized=False, date=None,
+                created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                rating100=None, tag_ids=[], performer_ids=[], studio_id=None,
+                custom_fields={}, has_file=True)
+    base.update(kw)
+    return models.SceneData(**base)
+
+
+def test_refresh_matches_full_when_nothing_changed():
+    """KEYSTONE: with identical frozen now and unchanged current data, the refresh
+    replay reproduces the full run's restash_score for every scene."""
+    import algorithm
+    from config import Settings
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 8, tzinfo=timezone.utc)
+    seed = "2026-06-08"
+    cfg = Settings()
+    scenes = [
+        _mk_scene(id="1", performer_ids=["7"], created_at=datetime(2026, 6, 1, tzinfo=timezone.utc)),
+        _mk_scene(id="2", performer_ids=["7"], play_history=[datetime(2026, 6, 6, tzinfo=timezone.utc)],
+                  play_count=1, last_played_at=datetime(2026, 6, 6, tzinfo=timezone.utc)),
+        _mk_scene(id="3", o_history=[datetime(2026, 2, 1, tzinfo=timezone.utc)],
+                  o_counter=1, play_count=1,
+                  last_played_at=datetime(2026, 2, 1, tzinfo=timezone.utc)),
+    ]
+    full = algorithm.score_scenes(scenes, cfg, now, seed)
+
+    # Build the cache exactly as restash._build_scene_cache would, then replay.
+    cached = {
+        s.id: {"base": full[s.id].components["base"], "n_events": full[s.id].n_events,
+               "created_at": s.created_at, "last_engagement": algorithm._last_engagement(s),
+               "perf_ids": s.performer_ids}
+        for s in scenes
+    }
+    current = {s.id: {"last_played_at": s.last_played_at, "play_count": s.play_count,
+                      "o_counter": s.o_counter, "custom_fields": {}} for s in scenes}
+    refreshed = algorithm.refresh_scene_scores(cached, current, cfg, now, seed)
+
+    for sid in cached:
+        assert refreshed[sid].restash_score == full[sid].restash_score, sid
+
+
+def test_refresh_buries_scene_watched_since_full_run():
+    import algorithm
+    from config import Settings
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 8, tzinfo=timezone.utc)
+    seed = "2026-06-08"
+    cfg = Settings()
+    created = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    # cached as never-watched (n_events 0), but current shows a play yesterday
+    cached = {"1": {"base": 0.5, "n_events": 0, "created_at": created,
+                    "last_engagement": None, "perf_ids": []}}
+    current = {"1": {"last_played_at": datetime(2026, 6, 7, tzinfo=timezone.utc),
+                     "play_count": 1, "o_counter": 0, "custom_fields": {}}}
+    out = algorithm.refresh_scene_scores(cached, current, cfg, now, seed)
+    assert out["1"].components["fresh"] == -0.9   # cooldown applied, not novelty
+    assert out["1"].components["novelty"] == 0.0
+
+
+def test_refresh_drops_scenes_absent_from_current():
+    import algorithm
+    from config import Settings
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 8, tzinfo=timezone.utc)
+    cfg = Settings()
+    created = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    cached = {"1": {"base": 0.2, "n_events": 0, "created_at": created,
+                    "last_engagement": None, "perf_ids": []},
+              "2": {"base": 0.3, "n_events": 0, "created_at": created,
+                    "last_engagement": None, "perf_ids": []}}
+    current = {"1": {"last_played_at": None, "play_count": 0, "o_counter": 0,
+                     "custom_fields": {}}}   # scene 2 deleted from library
+    out = algorithm.refresh_scene_scores(cached, current, cfg, now, "2026-06-08")
+    assert set(out.keys()) == {"1"}
