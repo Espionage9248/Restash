@@ -175,3 +175,66 @@ def test_run_clear_returns_nonzero_when_clears_fail(monkeypatch):
     monkeypatch.setattr(entry, "stash_io", fake_io)
     monkeypatch.setattr(entry, "writer", fake_writer)
     assert entry._run_clear("STASH", config.Settings()) == 1   # 3 attempted, 2 cleared → non-zero
+
+
+def test_run_dispatches_refresh(monkeypatch):
+    captured = {}
+    fake_io = types.SimpleNamespace(
+        connect=lambda c: "STASH",
+        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True})
+    monkeypatch.setattr(entry, "stash_io", fake_io)
+    monkeypatch.setattr(entry, "_run_refresh",
+                        lambda stash, settings: captured.setdefault("refresh", True) and 0)
+    assert entry.run({"args": {"mode": "refresh"}}) == 0 and captured["refresh"] is True
+
+
+def test_run_refresh_self_heals_when_cache_invalid(monkeypatch):
+    import types
+    fake_state = types.SimpleNamespace(
+        default_state_path=lambda: "/tmp/x.json",
+        load_state=lambda p: None,
+        is_valid=lambda st, cfg: (False, "no cache file (missing or unreadable)"))
+    monkeypatch.setattr(entry, "state", fake_state)
+    healed = {}
+    monkeypatch.setattr(entry, "_run_full",
+                        lambda stash, settings: healed.setdefault("full", True) and 0)
+    rc = entry._run_refresh("STASH", config.Settings())
+    assert rc == 0 and healed.get("full") is True
+
+
+def test_run_refresh_writes_from_cache(monkeypatch):
+    import types
+    from datetime import datetime, timezone
+    cached_scenes = {"1": {"base": 0.2, "n_events": 0,
+                           "created_at": "2025-01-01T00:00:00Z",
+                           "last_engagement": None, "perf_ids": ["9"]}}
+    fake_state = types.SimpleNamespace(
+        default_state_path=lambda: "/tmp/x.json",
+        load_state=lambda p: {"scenes": cached_scenes,
+                              "affinities": {"performers": {"9": 0.4}}},
+        is_valid=lambda st, cfg: (True, "ok"))
+    light = [{"id": "1", "last_played_at": None, "play_count": 0,
+              "o_counter": 0, "custom_fields": {}}]
+    fake_io = types.SimpleNamespace(
+        utcnow=entry.stash_io.utcnow,
+        fetch_scenes_light=lambda s: light,
+        fetch_performers=lambda s: [],
+        _parse_dt=entry.stash_io._parse_dt)
+    Score = lambda: types.SimpleNamespace(restash_score=50)
+    fake_algo = types.SimpleNamespace(
+        refresh_scene_scores=lambda *a, **k: {"1": Score()},
+        score_performers=lambda *a, **k: {},
+        _max_dt=entry.algorithm._max_dt)
+    calls = []
+    fake_writer = types.SimpleNamespace(
+        write_scores=lambda stash, entity, scored, existing, cfg, now_iso:
+            calls.append(entity) or {"written": len(scored), "skipped": 0,
+                                      "would_write": len(scored), "failed": 0},
+        RESTASH_KEYS=entry.writer.RESTASH_KEYS)
+    monkeypatch.setattr(entry, "state", fake_state)
+    monkeypatch.setattr(entry, "stash_io", fake_io)
+    monkeypatch.setattr(entry, "algorithm", fake_algo)
+    monkeypatch.setattr(entry, "writer", fake_writer)
+    rc = entry._run_refresh("STASH", config.Settings())
+    assert rc == 0
+    assert "scene" in calls and "performer" in calls

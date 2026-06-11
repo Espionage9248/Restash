@@ -4,6 +4,7 @@ import sys
 
 import algorithm
 import config
+import models
 import report
 import state
 import stash_io
@@ -37,8 +38,7 @@ def run(payload: dict) -> int:
     if mode == "clear":
         return _run_clear(stash, settings)
     if mode == "refresh":
-        log.info("Restash: 'refresh' is not implemented in this build (Phase 6).")
-        return 0
+        return _run_refresh(stash, settings)
     log.error(f"Restash: unknown mode '{mode}'.")
     return 1
 
@@ -184,6 +184,97 @@ def _run_clear(stash, settings: config.Settings) -> int:
                   f"(restash_* keys remain on those IDs); re-run to retry.")
     log.progress(1.0)
     return 1 if failed else 0
+
+
+def _parse_cached_scenes(raw_scenes: dict) -> dict:
+    """ISO strings → datetimes for the cached per-scene replay data."""
+    out = {}
+    for sid, c in raw_scenes.items():
+        out[sid] = {
+            "base": c["base"],
+            "n_events": c["n_events"],
+            "created_at": stash_io._parse_dt(c.get("created_at")) or stash_io.utcnow(),
+            "last_engagement": stash_io._parse_dt(c.get("last_engagement")),
+            "perf_ids": [str(x) for x in c.get("perf_ids", [])],
+        }
+    return out
+
+
+def _scene_standins(corpus: dict, light_by_id: dict) -> list:
+    """Lightweight SceneData stand-ins so score_performers can run unchanged:
+    only the fields it reads are populated (performer_ids, play_count, created_at,
+    last_played_at→computed last-engagement). Histories are empty so
+    _last_engagement returns the computed anchor."""
+    out = []
+    for sid, c in corpus.items():
+        cur = light_by_id[sid]
+        last_eng = algorithm._max_dt(c.get("last_engagement"), cur.get("last_played_at"))
+        out.append(models.SceneData(
+            id=sid, title="", play_history=[], o_history=[],
+            play_count=cur.get("play_count", 0), o_counter=cur.get("o_counter", 0),
+            play_duration=0.0, resume_time=None, last_played_at=last_eng,
+            file_duration=None, height=None, marker_count=0, organized=False,
+            date=None, created_at=c["created_at"], rating100=None,
+            tag_ids=[], performer_ids=c["perf_ids"], studio_id=None,
+            custom_fields={}, has_file=True))
+    return out
+
+
+def _run_refresh(stash, settings: config.Settings) -> int:
+    now = stash_io.utcnow()
+    now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    date_seed = now.strftime("%Y-%m-%d")
+
+    st = state.load_state(state.default_state_path())
+    ok, reason = state.is_valid(st, settings)
+    if not ok:
+        log.info(f"Restash refresh: cache unusable ({reason}); running full recompute.")
+        return _run_full(stash, settings)
+
+    log.progress(0.10)
+    light = stash_io.fetch_scenes_light(stash)
+    light_by_id = {s["id"]: s for s in light}
+    cached_scenes = _parse_cached_scenes(st["scenes"])
+    corpus = {sid: c for sid, c in cached_scenes.items() if sid in light_by_id}
+    added = [sid for sid in light_by_id if sid not in cached_scenes]
+    dropped = [sid for sid in cached_scenes if sid not in light_by_id]
+    log.info(f"Restash refresh: light-read {len(light)} scenes; cache has "
+             f"{len(cached_scenes)}; scoring {len(corpus)}.")
+    if added:
+        log.info(f"Restash refresh: {len(added)} new scene(s) not in cache — they "
+                 f"will be scored on the next full recompute.")
+    if dropped:
+        log.info(f"Restash refresh: {len(dropped)} cached scene(s) no longer in library.")
+    log.progress(0.45)
+
+    scene_scores = algorithm.refresh_scene_scores(corpus, light_by_id, settings,
+                                                  now, date_seed)
+    log.progress(0.65)
+
+    performers = stash_io.fetch_performers(stash)
+    aff = {"performers": st["affinities"].get("performers", {})}
+    stand_ins = _scene_standins(corpus, light_by_id)
+    performer_scores = algorithm.score_performers(performers, stand_ins, scene_scores,
+                                                  aff, settings, now)
+    log.progress(0.80)
+
+    existing_scene_cf = {sid: light_by_id[sid]["custom_fields"] for sid in scene_scores}
+    existing_perf_cf = {p.id: p.custom_fields for p in performers}
+    s_stats = writer.write_scores(stash, "scene", scene_scores, existing_scene_cf,
+                                  settings, now_iso)
+    p_stats = writer.write_scores(stash, "performer", performer_scores, existing_perf_cf,
+                                  settings, now_iso)
+    log.progress(0.95)
+
+    log.info(f"Restash refresh: scenes written={s_stats['written']} "
+             f"skipped={s_stats['skipped']}; performers written={p_stats['written']} "
+             f"skipped={p_stats['skipped']}.")
+    s_failed, p_failed = s_stats.get("failed", 0), p_stats.get("failed", 0)
+    if s_failed or p_failed:
+        log.error(f"Restash: {s_failed} scene + {p_failed} performer update(s) were "
+                  f"rejected by the server (those IDs were NOT written); re-run to retry.")
+    log.progress(1.0)
+    return 1 if (s_failed or p_failed) else 0
 
 
 def _has_restash(custom_fields: dict) -> bool:
