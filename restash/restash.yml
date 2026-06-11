@@ -21,7 +21,7 @@ tasks:
     description: Read everything, rebuild the taste model, and write freshness scores to scenes + performers (custom_fields). Skips unchanged.
     defaultArgs: { mode: full }
   - name: Quick Refresh
-    description: (Not yet implemented — planned for a future release) Fast re-score from a cached taste model
+    description: Fast daily re-score from the cached taste model — re-applies freshness, novelty, jitter, and wildcards without rebuilding affinities. Run Recompute All at least once first (Quick Refresh self-heals to a full run if no cache exists).
     defaultArgs: { mode: refresh }
   - name: Clear Restash Data
     description: Remove all Restash custom fields (restash_*) from scenes + performers. Other fields and ratings are left untouched.
