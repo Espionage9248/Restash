@@ -432,3 +432,43 @@ def test_rediscovery_resurfaces_old_favorite_above_post_cooldown_level():
     just, post_cooldown, rediscovery = final_at(0), final_at(21), final_at(150)
     assert just < post_cooldown          # buried right after watching
     assert rediscovery > post_cooldown   # genuinely resurfaces months later
+
+
+def test_finalize_from_base_novelty_branch_for_unwatched():
+    import algorithm
+    from config import Settings
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 8, tzinfo=timezone.utc)
+    created = datetime(2026, 6, 1, tzinfo=timezone.utc)   # 7 days old
+    final, extra = algorithm.finalize_from_base(
+        "s1", base=0.2, n_events=0, last_engagement=None, created_at=created,
+        now=now, date_seed="2026-06-08", cfg=Settings())
+    assert extra["novelty"] > 0.0          # young → novelty bonus
+    assert extra["fresh"] == 0.0
+    assert final == 0.2 + extra["novelty"] + extra["jitter"]
+
+
+def test_finalize_from_base_freshness_branch_for_watched():
+    import algorithm
+    from config import Settings
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 8, tzinfo=timezone.utc)
+    last = datetime(2026, 6, 7, tzinfo=timezone.utc)      # 1 day ago → buried
+    final, extra = algorithm.finalize_from_base(
+        "s1", base=0.5, n_events=4, last_engagement=last, created_at=last,
+        now=now, date_seed="2026-06-08", cfg=Settings())
+    assert extra["fresh"] == -0.9          # just-watched
+    assert extra["novelty"] == 0.0
+
+
+def test_finalize_watched_since_overrides_zero_events():
+    import algorithm
+    from config import Settings
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 8, tzinfo=timezone.utc)
+    last = datetime(2026, 6, 7, tzinfo=timezone.utc)
+    # n_events cached as 0, but watched_since=True → must take the freshness branch
+    final, extra = algorithm.finalize_from_base(
+        "s1", base=0.5, n_events=0, last_engagement=last, created_at=last,
+        now=now, date_seed="2026-06-08", cfg=Settings(), watched_since=True)
+    assert extra["fresh"] == -0.9 and extra["novelty"] == 0.0

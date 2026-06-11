@@ -327,6 +327,44 @@ def scene_base(scene: models.SceneData, aff: dict[str, dict],
             "confidence": confidence, "base": base, "n_events": ne}
 
 
+def _max_dt(a: datetime | None, b: datetime | None) -> datetime | None:
+    cands = [x for x in (a, b) if x is not None]
+    return max(cands) if cands else None
+
+
+def finalize_from_base(scene_id: str, base: float, n_events: int,
+                       last_engagement: datetime | None,
+                       created_at: datetime, now: datetime, date_seed: str,
+                       cfg: Settings, watched_since: bool = False) -> tuple[float, dict]:
+    """Apply the wall-clock tail (freshness/novelty + daily jitter) to a
+    pre-freshness `base`. Single source of truth shared by the full path
+    (score_scenes) and the refresh path (refresh_scene_scores).
+
+    `watched_since` forces the freshness branch even when n_events==0 — used by
+    refresh when a scene cached as never-watched has been played since the full run.
+    Returns (final_raw, extra_components) where extra holds fresh/fresh_d/novelty/
+    jitter/raw to merge into the caller's components dict."""
+    extra: dict = {}
+    if n_events == 0 and not watched_since:
+        nov = novelty(age_days(created_at, now), cfg)
+        final = base + nov
+        extra["fresh"] = 0.0
+        extra["fresh_d"] = None
+        extra["novelty"] = nov
+    else:
+        d = age_days(last_engagement, now) if last_engagement else cfg.rediscovery_max_days
+        f = freshness(d, cfg)
+        final = base + f * abs(base) * cfg.fresh_weight
+        extra["fresh"] = f
+        extra["fresh_d"] = d
+        extra["novelty"] = 0.0
+    jit = daily_jitter(scene_id, date_seed, cfg.jitter_amplitude)
+    extra["jitter"] = jit
+    final += jit
+    extra["raw"] = final
+    return final, extra
+
+
 def score_scenes(scenes: list[models.SceneData], cfg: Settings, now: datetime,
                  date_seed: str, favorites: set[str] | None = None,
                  ratings: dict[str, int] | None = None,
@@ -347,25 +385,10 @@ def score_scenes(scenes: list[models.SceneData], cfg: Settings, now: datetime,
     for s in scenes:
         comp = scene_base(s, aff, tag_counts, dur_median, dur_scale, cfg, now)
         ne = comp["n_events"]
-        if ne == 0:
-            lib_age = age_days(s.created_at, now)
-            nov = novelty(lib_age, cfg)
-            final = comp["base"] + nov
-            comp["fresh"] = 0.0
-            comp["fresh_d"] = None
-            comp["novelty"] = nov
-        else:
-            last = _last_engagement(s)
-            d = age_days(last, now) if last else cfg.rediscovery_max_days
-            f = freshness(d, cfg)
-            final = comp["base"] + f * abs(comp["base"]) * cfg.fresh_weight
-            comp["fresh"] = f
-            comp["fresh_d"] = d
-            comp["novelty"] = 0.0
-        jit = daily_jitter(s.id, date_seed, cfg.jitter_amplitude)
-        comp["jitter"] = jit
-        final += jit
-        comp["raw"] = final
+        last = None if ne == 0 else _last_engagement(s)
+        final, extra = finalize_from_base(
+            s.id, comp["base"], ne, last, s.created_at, now, date_seed, cfg)
+        comp.update(extra)
         pre[s.id] = comp
         raw_values.append(final)
         ids.append(s.id)
