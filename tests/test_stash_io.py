@@ -178,3 +178,24 @@ def test_filter_excluded_drops_tagged_scenes_and_performers():
 def test_filter_excluded_returns_tuple_of_two_lists():
     out = stash_io.filter_excluded([], [], None)
     assert out == ([], [])
+
+def test_fetch_scenes_light_maps_minimal_fields(monkeypatch):
+    import stash_io
+    pages = [[{"id": 1, "last_played_at": "2026-05-01T00:00:00Z",
+               "play_count": 3, "o_counter": 1,
+               "custom_fields": {"restash_score": 42}}], []]
+    calls = {"n": 0}
+
+    class FakeStash:
+        def call_GQL(self, query, variables=None):
+            i = calls["n"]; calls["n"] += 1
+            return {"findScenes": {"scenes": pages[i] if i < len(pages) else []}}
+
+    out = stash_io.fetch_scenes_light(FakeStash())
+    assert len(out) == 1
+    row = out[0]
+    assert row["id"] == "1"
+    assert row["play_count"] == 3 and row["o_counter"] == 1
+    assert row["custom_fields"] == {"restash_score": 42}
+    # last_played_at parsed to an aware datetime
+    assert row["last_played_at"].year == 2026
