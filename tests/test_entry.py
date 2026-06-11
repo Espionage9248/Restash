@@ -84,6 +84,10 @@ def test_run_full_targeted_writes_only_named_scenes(monkeypatch):
     monkeypatch.setattr(entry, "stash_io", fake_io)
     monkeypatch.setattr(entry, "algorithm", fake_algo)
     monkeypatch.setattr(entry, "writer", fake_writer)
+    monkeypatch.setattr(entry, "_build_scene_cache", lambda *a, **k: {})
+    monkeypatch.setattr(entry, "state", types.SimpleNamespace(
+        default_state_path=lambda: "/tmp/ignored.json",
+        save_state=lambda *a, **k: None))
     rc = entry._run_full("STASH", config.Settings(write_only_scene_ids=("2",)))
     assert rc == 0
     assert ("scene", ["2"]) in calls       # only the targeted scene written
@@ -112,7 +116,50 @@ def test_run_full_returns_nonzero_when_writes_fail(monkeypatch):
     monkeypatch.setattr(entry, "stash_io", fake_io)
     monkeypatch.setattr(entry, "algorithm", fake_algo)
     monkeypatch.setattr(entry, "writer", fake_writer)
+    monkeypatch.setattr(entry, "_build_scene_cache", lambda *a, **k: {})
+    monkeypatch.setattr(entry, "state", types.SimpleNamespace(
+        default_state_path=lambda: "/tmp/ignored.json",
+        save_state=lambda *a, **k: None))
     assert entry._run_full("STASH", config.Settings()) == 1   # a rejected write → non-zero exit
+
+
+def test_run_full_persists_cache(monkeypatch):
+    import types
+    from datetime import datetime, timezone
+    created = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    Scene = lambda i: types.SimpleNamespace(
+        id=i, custom_fields={}, favorite=False, rating100=None,
+        created_at=created, performer_ids=["9"])
+    fake_scenes = [Scene("1"), Scene("2")]
+    Score = lambda b, n: types.SimpleNamespace(components={"base": b}, n_events=n)
+    fake_io = types.SimpleNamespace(
+        utcnow=entry.stash_io.utcnow,
+        fetch_scenes=lambda s: fake_scenes,
+        fetch_performers=lambda s: [],
+        resolve_tag_id=lambda s, n: None,
+        filter_excluded=lambda sc, pf, ex: (sc, pf))
+    fake_algo = types.SimpleNamespace(
+        build_affinities=lambda *a, **k: {"performers": {"9": 0.4}},
+        score_scenes=lambda *a, **k: {"1": Score(0.2, 0), "2": Score(0.3, 5)},
+        score_performers=lambda *a, **k: {},
+        _last_engagement=lambda s: None)
+    captured = {}
+    fake_state = types.SimpleNamespace(
+        default_state_path=lambda: "/tmp/ignored.json",
+        save_state=lambda path, **kw: captured.update(kw))
+    fake_writer = types.SimpleNamespace(
+        write_scores=lambda *a, **k: {"written": 0, "skipped": 0, "would_write": 0, "failed": 0},
+        clear_scores=lambda *a, **k: 0, RESTASH_KEYS=entry.writer.RESTASH_KEYS)
+    monkeypatch.setattr(entry, "stash_io", fake_io)
+    monkeypatch.setattr(entry, "algorithm", fake_algo)
+    monkeypatch.setattr(entry, "writer", fake_writer)
+    monkeypatch.setattr(entry, "state", fake_state)
+    rc = entry._run_full("STASH", config.Settings())
+    assert rc == 0
+    assert captured["affinities"] == {"performers": {"9": 0.4}}
+    assert captured["scenes"]["1"]["base"] == 0.2
+    assert captured["scenes"]["2"]["n_events"] == 5
+    assert captured["scenes"]["1"]["perf_ids"] == ["9"]
 
 
 def test_run_clear_returns_nonzero_when_clears_fail(monkeypatch):

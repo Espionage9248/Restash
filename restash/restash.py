@@ -5,6 +5,7 @@ import sys
 import algorithm
 import config
 import report
+import state
 import stash_io
 import writer
 from stashapi import log   # stashapp-tools logging → drives Stash progress bar
@@ -113,6 +114,12 @@ def _run_full(stash, settings: config.Settings) -> int:
                                                   scene_scores, aff, settings, now)
     log.progress(0.70)
 
+    scenes_cache = _build_scene_cache(kept_scenes, scene_scores)
+    state.save_state(state.default_state_path(), settings=settings, affinities=aff,
+                     scenes=scenes_cache, written_at=now_iso)
+    log.info(f"Restash: wrote taste-model cache ({len(scenes_cache)} scenes) "
+             f"to restash_state.json.")
+
     targeted = bool(settings.write_only_scene_ids)
     if targeted:
         target = set(settings.write_only_scene_ids)
@@ -181,6 +188,27 @@ def _run_clear(stash, settings: config.Settings) -> int:
 
 def _has_restash(custom_fields: dict) -> bool:
     return any(k in (custom_fields or {}) for k in writer.RESTASH_KEYS)
+
+
+def _iso(dt) -> str | None:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if dt else None
+
+
+def _build_scene_cache(kept_scenes, scene_scores) -> dict:
+    """Per-scene replay cache: pre-freshness base + the bits refresh needs."""
+    out = {}
+    for s in kept_scenes:
+        sc = scene_scores.get(s.id)
+        if sc is None:
+            continue
+        out[s.id] = {
+            "base": sc.components.get("base"),
+            "n_events": sc.n_events,
+            "created_at": _iso(s.created_at),
+            "last_engagement": _iso(algorithm._last_engagement(s)),
+            "perf_ids": s.performer_ids,
+        }
+    return out
 
 
 def _watched_diagnostic(scenes, scene_scores, settings, top_n: int = 20):
