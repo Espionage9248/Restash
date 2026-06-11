@@ -1,6 +1,6 @@
 name: Restash
 description: Computes a freshness score for scenes and performers into custom fields.
-version: 0.1.0
+version: 0.2.0
 url: https://github.com/Espionage9248/restash
 exec:
   - python
@@ -21,7 +21,7 @@ tasks:
     description: Read everything, rebuild the taste model, and write freshness scores to scenes + performers (custom_fields). Skips unchanged.
     defaultArgs: { mode: full }
   - name: Quick Refresh
-    description: (Not yet implemented — planned for a future release) Fast re-score from a cached taste model
+    description: Fast daily re-score from the cached taste model — re-applies freshness, novelty, jitter, and wildcards without rebuilding affinities. Run Recompute All at least once first (Quick Refresh self-heals to a full run if no cache exists).
     defaultArgs: { mode: refresh }
   - name: Clear Restash Data
     description: Remove all Restash custom fields (restash_*) from scenes + performers. Other fields and ratings are left untouched.

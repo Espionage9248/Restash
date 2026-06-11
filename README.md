@@ -128,6 +128,50 @@ Custom fields are **filterable** in the Stash UI too, so you can build saved fil
 
 ---
 
+## Scheduling
+
+Stash has **no built-in scheduler for plugin tasks**, so run **Quick Refresh** on a
+schedule from outside Stash. Quick Refresh is the cheap daily job: it re-applies
+freshness, novelty, jitter, and wildcards from the cached taste model (written by
+**Recompute All**) without rebuilding affinities. If the cache is missing or stale it
+self-heals by running a full recompute. Expect a daily refresh to skip ~99% of entities
+as unchanged — that is normal and correct.
+
+Trigger it via the GraphQL `runPluginTask` mutation. A ready-to-use helper lives in
+[`scripts/restash-refresh.sh`](scripts/restash-refresh.sh):
+
+```bash
+STASH_URL=http://localhost:9999 ./scripts/restash-refresh.sh
+# with auth enabled:
+STASH_URL=http://host:9999 STASH_API_KEY=xxxx ./scripts/restash-refresh.sh
+```
+
+### cron
+
+```cron
+0 4 * * * STASH_URL=http://localhost:9999 /opt/restash/scripts/restash-refresh.sh >> /var/log/restash-refresh.log 2>&1
+```
+
+### systemd timer
+
+Copy [`scripts/restash-refresh.service`](scripts/restash-refresh.service) and
+[`scripts/restash-refresh.timer`](scripts/restash-refresh.timer) to
+`/etc/systemd/system/` (edit the `ExecStart` path and `STASH_URL`/`STASH_API_KEY`), then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now restash-refresh.timer
+systemctl list-timers restash-refresh.timer
+```
+
+The underlying mutation (for reference):
+
+```graphql
+mutation { runPluginTask(plugin_id: "restash", task_name: "Quick Refresh") }
+```
+
+---
+
 ## Settings
 
 Exposed under **Settings → Plugins → Restash**. Defaults match the spec.

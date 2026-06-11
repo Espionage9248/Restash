@@ -1,0 +1,10 @@
+[Unit]
+Description=Restash Quick Refresh (Stash freshness re-score)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=STASH_URL=http://localhost:9999
+# Environment=STASH_API_KEY=your-api-key-here
+ExecStart=/opt/restash/scripts/restash-refresh.sh
