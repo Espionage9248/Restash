@@ -9,7 +9,7 @@ I want to see right now?"* and changes over time.
 The score is written **only** into each entity's `custom_fields` (keys prefixed
 `restash_`). The native `rating100` star rating is **never touched**.
 
-> **Status:** 0.2.0. The scoring engine, the write path (`Recompute All`,
+> **Status:** 0.2.2. The scoring engine, the write path (`Recompute All`,
 > `Clear Restash Data`), and `Quick Refresh` (a fast daily re-score from a cached taste
 > model) are complete and validated end-to-end against a real ~5,900-scene library. The
 > optional `rating100` mirror remains a separate future feature.
@@ -68,6 +68,28 @@ custom fields are preserved):
 ---
 
 ## Install
+
+### Via plugin source (recommended)
+
+Add Restash as a Stash plugin source and install it from the UI — no manual file copying,
+and updates show up in-app:
+
+1. **Settings → Plugins → Available Plugins → Add Source**, then enter:
+   - **Name:** `Restash`
+   - **Source URL:** `https://espionage9248.github.io/Restash/index.yml`
+   - **Local Path:** `restash` (or any folder name you like)
+2. Find **Restash** in the Available Plugins list and click **Install**.
+3. Install the runtime dependency for the Python that Stash uses (the source ships the
+   plugin code, not its Python deps — standard for Stash plugins):
+   ```bash
+   pip install stashapp-tools
+   ```
+4. **Settings → Plugins → Reload Plugins.** Restash and its tasks appear under
+   **Settings → Tasks**.
+
+When a new version is published, Stash shows an update on the source — no reinstall needed.
+
+### Manual install
 
 1. Copy the **`restash/`** folder from this repo into your Stash plugins directory (e.g.
    `~/.stash/plugins/restash/`), so that `restash.yml` sits at
