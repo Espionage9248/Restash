@@ -1,0 +1,40 @@
+name: Publish plugin source
+
+# Builds the Stash plugin source site (index.yml + restash.zip) and deploys it to
+# GitHub Pages. Users add the resulting URL in Stash → Settings → Plugins →
+# Available Plugins → Add Source:
+#   https://espionage9248.github.io/Restash/index.yml
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # build_source.sh needs git history for version + date
+      - name: Build source site
+        run: bash scripts/build_source.sh
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
