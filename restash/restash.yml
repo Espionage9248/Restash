@@ -1,6 +1,6 @@
 name: Restash
 description: Computes a freshness score for scenes and performers into custom fields.
-version: 0.2.2
+version: 0.2.3
 url: https://github.com/Espionage9248/restash
 exec:
   - python
