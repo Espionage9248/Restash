@@ -13,23 +13,42 @@ import writer
 from stashapi import log   # stashapp-tools logging → drives Stash progress bar
 
 
+PLUGIN_ID = "restash"
+
+
 def parse_input(payload: dict):
+    """Pull the bits Stash actually sends: the server connection and the task
+    `args` (mode + any defaultArgs / dev overrides). Plugin SETTINGS are NOT in
+    the payload — Stash delivers them only via the configuration query — so they
+    are resolved later in run() against the live connection."""
     args = payload.get("args") or {}
     mode = args.get("mode") or "dry"
     conn = payload.get("server_connection") or {}
-    plugin_cfg = payload.get("plugin_config") or args
+    return mode, conn, args
+
+
+def build_settings(plugin_cfg: dict | None, args: dict) -> config.Settings:
+    """Layer settings: dataclass defaults < Stash plugin settings < payload-arg
+    overrides (write_limit / scene_ids — used for targeted and dev runs)."""
     settings = config.Settings.from_plugin_settings(plugin_cfg)
     if "write_limit" in args:
         settings.write_limit = int(args["write_limit"])
     if "scene_ids" in args:
         settings.write_only_scene_ids = tuple(str(i) for i in args["scene_ids"])
-    return mode, conn, settings
+    return settings
 
 
 def run(payload: dict) -> int:
-    mode, conn, settings = parse_input(payload)
+    mode, conn, args = parse_input(payload)
     stash = stash_io.connect(conn)
     caps = stash_io.ensure_schema(stash)
+    # Stash sends only server_connection + args — never the plugin settings — so
+    # read them from the server here. A payload-provided plugin_config still wins
+    # (used by tests and tools/run_local).
+    plugin_cfg = stash_io.fetch_plugin_settings(stash, PLUGIN_ID)
+    if payload.get("plugin_config"):
+        plugin_cfg = {**plugin_cfg, **payload["plugin_config"]}
+    settings = build_settings(plugin_cfg, args)
     log.info(f"Restash: schema OK (scene custom_fields, "
              f"remove={caps['custom_fields_remove']}). mode={mode}")
     if mode == "dry":

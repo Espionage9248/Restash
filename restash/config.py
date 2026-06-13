@@ -88,11 +88,18 @@ class Settings:
             if plugin_key not in plugin_cfg:
                 continue
             value = plugin_cfg[plugin_key]
+            # Treat null / blank as "not set" so a cleared UI field keeps the
+            # documented default rather than being overridden with empty/garbage.
+            if value is None or (isinstance(value, str) and value.strip() == ""):
+                continue
             if field_name in bool_fields:
                 value = bool(value)
             elif field_name == "exclude_tag_name":
                 value = str(value)
             else:
-                value = float(value)
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue   # unparseable number: keep the default
             setattr(s, field_name, value)
         return s

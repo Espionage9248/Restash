@@ -7,12 +7,12 @@ exec:
   - "{pluginDir}/restash.py"
 interface: raw
 settings:
-  tasteHalfLifeDays:    { displayName: Taste half-life (days), type: NUMBER }
-  cooldownDays:         { displayName: Cooldown period (days), type: NUMBER }
-  freshWeight:          { displayName: Freshness strength, type: NUMBER }
-  wildcardPercent:      { displayName: Wildcard %, type: NUMBER }
-  respectManualRatings: { displayName: Blend manual ratings as a taste prior, type: BOOLEAN }
-  excludeTagName:       { displayName: Exclusion tag name, type: STRING }
+  tasteHalfLifeDays:    { displayName: Taste half-life (days), type: NUMBER, description: "How fast older watch events fade when building taste. Leave blank for the default (90)." }
+  cooldownDays:         { displayName: Cooldown period (days), type: NUMBER, description: "Post-watch suppression window before rediscovery begins. Leave blank for the default (21)." }
+  freshWeight:          { displayName: Freshness strength, type: NUMBER, description: "Multiplier on the cooldown/rediscovery effect. Leave blank for the default (1.0)." }
+  wildcardPercent:      { displayName: Wildcard %, type: NUMBER, description: "Share of the library promoted as low-confidence wildcards each day. Leave blank for the default (2.0)." }
+  respectManualRatings: { displayName: Blend manual ratings as a taste prior, type: BOOLEAN, description: "If on, a performer's manual rating100 nudges their affinity (read-only). Default off." }
+  excludeTagName:       { displayName: Exclusion tag name, type: STRING, description: "Entities carrying this tag are dropped from scoring. Leave blank for the default ([Restash: Exclude])." }
 tasks:
   - name: Dry Run Report
     description: Full compute, writes nothing, logs top-30 scenes/performers with score breakdowns. Run this first.

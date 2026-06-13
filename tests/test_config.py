@@ -22,6 +22,18 @@ def test_from_plugin_settings_ignores_unknown_keys():
     s = config.Settings.from_plugin_settings({"somethingElse": 7})
     assert s == config.Settings()
 
+def test_from_plugin_settings_keeps_defaults_for_blank_or_null():
+    # a cleared UI field (null / empty string) must NOT clobber the default
+    s = config.Settings.from_plugin_settings(
+        {"cooldownDays": None, "wildcardPercent": "", "excludeTagName": "  "})
+    assert s.cooldown_days == 21.0
+    assert s.wildcard_percent == 2.0
+    assert s.exclude_tag_name == "[Restash: Exclude]"
+
+def test_from_plugin_settings_keeps_default_on_unparseable_number():
+    s = config.Settings.from_plugin_settings({"cooldownDays": "abc"})
+    assert s.cooldown_days == 21.0
+
 def test_write_settings_defaults():
     s = config.Settings()
     assert s.write_chunk_size == 100

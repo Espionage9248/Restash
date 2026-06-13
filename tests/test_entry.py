@@ -2,17 +2,21 @@ import types
 import restash as entry
 import config
 
-def test_parse_input_extracts_mode_and_settings():
-    payload = {"server_connection": {"Scheme": "http"},
-               "args": {"mode": "dry"}, "plugin_config": {"cooldownDays": 7}}
-    mode, conn, settings = entry.parse_input(payload)
+def test_parse_input_extracts_mode_conn_and_args():
+    payload = {"server_connection": {"Scheme": "http"}, "args": {"mode": "dry"}}
+    mode, conn, args = entry.parse_input(payload)
     assert mode == "dry"
     assert conn == {"Scheme": "http"}
-    assert settings.cooldown_days == 7.0
+    assert args == {"mode": "dry"}
 
 def test_parse_input_defaults_mode_to_dry():
     mode, _, _ = entry.parse_input({})
     assert mode == "dry"
+
+def test_build_settings_applies_plugin_config():
+    s = entry.build_settings({"cooldownDays": 7}, {})
+    assert s.cooldown_days == 7.0
+    assert s.wildcard_percent == 2.0   # untouched key keeps default
 
 def test_run_dispatches_dry(monkeypatch):
     captured = {}
@@ -20,6 +24,7 @@ def test_run_dispatches_dry(monkeypatch):
         connect=lambda c: "STASH",
         ensure_schema=lambda s: {"scene_custom_fields": True,
                                  "custom_fields_remove": True},
+        fetch_plugin_settings=lambda s, pid: {},
     )
     monkeypatch.setattr(entry, "stash_io", fake_io)
     monkeypatch.setattr(entry, "_run_dry",
@@ -31,7 +36,8 @@ def test_run_dispatches_full(monkeypatch):
     captured = {}
     fake_io = types.SimpleNamespace(
         connect=lambda c: "STASH",
-        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True})
+        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True},
+        fetch_plugin_settings=lambda s, pid: {})
     monkeypatch.setattr(entry, "stash_io", fake_io)
     monkeypatch.setattr(entry, "_run_full",
                         lambda stash, settings: captured.setdefault("full", True) and 0)
@@ -41,21 +47,48 @@ def test_run_dispatches_clear(monkeypatch):
     captured = {}
     fake_io = types.SimpleNamespace(
         connect=lambda c: "STASH",
-        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True})
+        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True},
+        fetch_plugin_settings=lambda s, pid: {})
     monkeypatch.setattr(entry, "stash_io", fake_io)
     monkeypatch.setattr(entry, "_run_clear",
                         lambda stash, settings: captured.setdefault("clear", True) and 0)
     assert entry.run({"args": {"mode": "clear"}}) == 0 and captured["clear"] is True
 
-def test_parse_input_reads_write_limit_from_args():
-    payload = {"args": {"mode": "full", "write_limit": 5}}
-    mode, _, settings = entry.parse_input(payload)
-    assert mode == "full" and settings.write_limit == 5
+def test_build_settings_reads_write_limit_from_args():
+    s = entry.build_settings(None, {"mode": "full", "write_limit": 5})
+    assert s.write_limit == 5
 
-def test_parse_input_reads_scene_ids_from_args():
-    payload = {"args": {"mode": "full", "scene_ids": [10, "22"]}}
-    mode, _, settings = entry.parse_input(payload)
-    assert mode == "full" and settings.write_only_scene_ids == ("10", "22")
+def test_build_settings_reads_scene_ids_from_args():
+    s = entry.build_settings(None, {"mode": "full", "scene_ids": [10, "22"]})
+    assert s.write_only_scene_ids == ("10", "22")
+
+def test_run_reads_settings_from_server(monkeypatch):
+    seen = {}
+    fake_io = types.SimpleNamespace(
+        connect=lambda c: "STASH",
+        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True},
+        fetch_plugin_settings=lambda s, pid: {"cooldownDays": 5})
+    def cap(stash, settings):
+        seen["cd"] = settings.cooldown_days
+        return 0
+    monkeypatch.setattr(entry, "stash_io", fake_io)
+    monkeypatch.setattr(entry, "_run_dry", cap)
+    assert entry.run({"args": {"mode": "dry"}}) == 0
+    assert seen["cd"] == 5.0   # server-configured setting actually took effect
+
+def test_run_payload_plugin_config_overrides_server(monkeypatch):
+    seen = {}
+    fake_io = types.SimpleNamespace(
+        connect=lambda c: "STASH",
+        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True},
+        fetch_plugin_settings=lambda s, pid: {"cooldownDays": 5})
+    def cap(stash, settings):
+        seen["cd"] = settings.cooldown_days
+        return 0
+    monkeypatch.setattr(entry, "stash_io", fake_io)
+    monkeypatch.setattr(entry, "_run_dry", cap)
+    rc = entry.run({"args": {"mode": "dry"}, "plugin_config": {"cooldownDays": 9}})
+    assert rc == 0 and seen["cd"] == 9.0
 
 def test_run_full_targeted_writes_only_named_scenes(monkeypatch):
     import types
@@ -181,7 +214,8 @@ def test_run_dispatches_refresh(monkeypatch):
     captured = {}
     fake_io = types.SimpleNamespace(
         connect=lambda c: "STASH",
-        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True})
+        ensure_schema=lambda s: {"scene_custom_fields": True, "custom_fields_remove": True},
+        fetch_plugin_settings=lambda s, pid: {})
     monkeypatch.setattr(entry, "stash_io", fake_io)
     monkeypatch.setattr(entry, "_run_refresh",
                         lambda stash, settings: captured.setdefault("refresh", True) and 0)

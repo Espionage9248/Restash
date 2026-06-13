@@ -199,3 +199,26 @@ def test_fetch_scenes_light_maps_minimal_fields(monkeypatch):
     assert row["custom_fields"] == {"restash_score": 42}
     # last_played_at parsed to an aware datetime
     assert row["last_played_at"].year == 2026
+
+
+# --- fetch_plugin_settings (settings are read from the server, not the payload) ---
+
+class _CfgStash:
+    def __init__(self, result):
+        self._result = result
+    def call_GQL(self, query, variables=None):
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+def test_fetch_plugin_settings_extracts_by_id():
+    stash = _CfgStash({"configuration": {"plugins": {"restash": {"cooldownDays": 7}}}})
+    assert stash_io.fetch_plugin_settings(stash, "restash") == {"cooldownDays": 7}
+
+def test_fetch_plugin_settings_absent_plugin_returns_empty():
+    stash = _CfgStash({"configuration": {"plugins": {"other": {"x": 1}}}})
+    assert stash_io.fetch_plugin_settings(stash, "restash") == {}
+
+def test_fetch_plugin_settings_on_error_returns_empty():
+    stash = _CfgStash(RuntimeError("boom"))
+    assert stash_io.fetch_plugin_settings(stash, "restash") == {}

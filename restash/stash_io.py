@@ -47,6 +47,26 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+_PLUGIN_CONFIG = "query { configuration { plugins } }"
+
+
+def fetch_plugin_settings(stash, plugin_id: str) -> dict:
+    """Read this plugin's user-configured settings (Settings → Plugins) from the
+    Stash server. Stash does NOT include plugin settings in the task payload — it
+    only sends server_connection + args — so they must be pulled from the
+    configuration query. Returns the raw camelCase settings map (e.g.
+    {"cooldownDays": 7}); keys the user never set are simply absent, so the
+    Settings dataclass defaults fill them in. Returns {} on any error or
+    unexpected shape (degrade to defaults rather than abort the run)."""
+    try:
+        result = stash.call_GQL(_PLUGIN_CONFIG)
+    except Exception:   # noqa: BLE001 — a settings read must never abort the run
+        return {}
+    plugins = ((result or {}).get("configuration") or {}).get("plugins") or {}
+    cfg = plugins.get(plugin_id)
+    return cfg if isinstance(cfg, dict) else {}
+
+
 SCENE_FRAGMENT = """
 id title organized rating100 date created_at resume_time play_duration
 play_count o_counter last_played_at play_history o_history
