@@ -9,7 +9,7 @@ I want to see right now?"* and changes over time.
 The score is written **only** into each entity's `custom_fields` (keys prefixed
 `restash_`). The native `rating100` star rating is **never touched**.
 
-> **Status:** 0.2.2. The scoring engine, the write path (`Recompute All`,
+> **Status:** 0.2.3. The scoring engine, the write path (`Recompute All`,
 > `Clear Restash Data`), and `Quick Refresh` (a fast daily re-score from a cached taste
 > model) are complete and validated end-to-end against a real ~5,900-scene library. The
 > optional `rating100` mirror remains a separate future feature.
