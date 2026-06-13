@@ -89,6 +89,13 @@ and updates show up in-app:
 
 When a new version is published, Stash shows an update on the source — no reinstall needed.
 
+> **Switching from a manual install?** Restash keeps a local cache (`restash_state.json`)
+> inside its plugin folder. Installing to a new folder won't carry that cache over — which
+> is harmless, since your scores already live in Stash's `custom_fields`; the next run just
+> does a one-time full recompute to rebuild the cache (Quick Refresh self-heals to a full
+> run). To skip even that, copy `restash_state.json` from the old plugin folder into the new
+> one after installing. Then remove the old manual copy so you don't run two Restash plugins.
+
 ### Manual install
 
 1. Copy the **`restash/`** folder from this repo into your Stash plugins directory (e.g.
